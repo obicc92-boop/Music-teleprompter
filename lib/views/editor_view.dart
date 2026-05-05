@@ -8,11 +8,13 @@ import '../utils/constants.dart';
 class EditorView extends StatefulWidget {
   final Script initialScript;
   final void Function(Script script) onLaunchTeleprompter;
+  final VoidCallback onBack;
 
   const EditorView({
     super.key,
     required this.initialScript,
     required this.onLaunchTeleprompter,
+    required this.onBack,
   });
 
   @override
@@ -122,6 +124,12 @@ class _EditorViewState extends State<EditorView> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
+          _toolbarButton(
+            icon: Icons.arrow_back_rounded,
+            label: 'Home',
+            onTap: widget.onBack,
+          ),
+          const SizedBox(width: 8),
           _toolbarButton(
             icon: Icons.folder_open_rounded,
             label: 'Open',

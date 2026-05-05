@@ -79,6 +79,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     });
   }
 
+  void _backToHome() {
+    setState(() => _screen = AppScreen.home);
+  }
+
   void _backToEditor() {
     _syncEngine.stop();
     setState(() => _screen = AppScreen.editor);
@@ -118,6 +122,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
         return EditorView(
           initialScript: _activeScript,
           onLaunchTeleprompter: _launchTeleprompter,
+          onBack: _backToHome,
         );
       case AppScreen.teleprompter:
         return TeleprompterView(
@@ -125,6 +130,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           syncEngine: _syncEngine,
           settings: _settings,
           onBack: _backToEditor,
+          onSettings: () => setState(() => _showSettings = true),
         );
     }
   }

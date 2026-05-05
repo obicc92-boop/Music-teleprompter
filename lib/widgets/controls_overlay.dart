@@ -11,6 +11,7 @@ class ControlsOverlay extends StatefulWidget {
   final VoidCallback onFullscreen;
   final VoidCallback onMirrorToggle;
   final VoidCallback onSettings;
+  final VoidCallback onBack;
   final bool isMirrorMode;
   final bool isFullscreen;
 
@@ -21,6 +22,7 @@ class ControlsOverlay extends StatefulWidget {
     required this.onFullscreen,
     required this.onMirrorToggle,
     required this.onSettings,
+    required this.onBack,
     required this.isMirrorMode,
     required this.isFullscreen,
   });
@@ -118,6 +120,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              _backButton(),
+              const SizedBox(width: 16),
               _playPauseButton(state),
               const SizedBox(width: 20),
               _speedControl(state),
@@ -204,6 +208,15 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _backButton() {
+    return _iconButton(
+      icon: Icons.arrow_back_rounded,
+      color: AppColors.sectionHeader,
+      onTap: widget.onBack,
+      tooltip: 'Back to editor (ESC)',
     );
   }
 

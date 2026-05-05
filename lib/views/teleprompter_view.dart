@@ -15,6 +15,7 @@ class TeleprompterView extends StatefulWidget {
   final SyncEngine syncEngine;
   final AppSettings settings;
   final VoidCallback onBack;
+  final VoidCallback onSettings;
 
   const TeleprompterView({
     super.key,
@@ -22,6 +23,7 @@ class TeleprompterView extends StatefulWidget {
     required this.syncEngine,
     required this.settings,
     required this.onBack,
+    required this.onSettings,
   });
 
   @override
@@ -71,7 +73,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
   }
 
   void _openSettings() {
-    // Settings handled by parent app via overlay
+    widget.onSettings();
   }
 
   @override
@@ -95,6 +97,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
                 onFullscreen: _toggleFullscreen,
                 onMirrorToggle: _toggleMirror,
                 onSettings: _openSettings,
+                onBack: _handleBack,
                 isMirrorMode: _isMirrorMode,
                 isFullscreen: _isFullscreen,
               ),
@@ -119,6 +122,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
 
           return ClipRect(
             child: Stack(
+              fit: StackFit.expand,
               children: List.generate(lines.length, (i) {
                 final y = anchorY + (i - activeIdx) * lineHeight -
                     (pixelOffset - activeIdx * lineHeight);
