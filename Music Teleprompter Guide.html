@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Music Teleprompter — User Guide</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      line-height: 1.7;
+      padding: 48px 24px;
+    }
+
+    .page {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      padding: 48px 0 40px;
+      border-bottom: 1px solid #222;
+      margin-bottom: 48px;
+    }
+
+    .header .icon {
+      font-size: 52px;
+      margin-bottom: 16px;
+    }
+
+    .header h1 {
+      font-size: 32px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+
+    .header .subtitle {
+      margin-top: 8px;
+      font-size: 14px;
+      color: #666;
+      letter-spacing: 1px;
+    }
+
+    /* Section headings */
+    h2 {
+      font-size: 11px;
+      font-weight: 600;
+      color: #ff6b35;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin: 48px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    h3 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #ffffff;
+      margin: 28px 0 10px;
+    }
+
+    p {
+      font-size: 15px;
+      color: #aaa;
+      margin-bottom: 12px;
+    }
+
+    /* Screens flow */
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0 28px;
+      flex-wrap: wrap;
+    }
+
+    .flow-step {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .flow-arrow {
+      color: #ff6b35;
+      font-size: 18px;
+    }
+
+    /* Feature cards */
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+
+    .card {
+      background: #141414;
+      border: 1px solid #1e1e1e;
+      border-radius: 10px;
+      padding: 20px;
+    }
+
+    .card h4 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 6px;
+    }
+
+    .card p {
+      font-size: 13px;
+      color: #666;
+      margin: 0;
+    }
+
+    .card .tag {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #ff6b35;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    /* Keyboard table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+
+    thead tr {
+      border-bottom: 1px solid #2a2a2a;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: #555;
+      text-transform: uppercase;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #1a1a1a;
+    }
+
+    tbody tr:last-child {
+      border-bottom: none;
+    }
+
+    tbody td {
+      padding: 11px 14px;
+      color: #aaa;
+    }
+
+    kbd {
+      display: inline-block;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 5px;
+      padding: 3px 10px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* Script format box */
+    .code-block {
+      background: #111;
+      border: 1px solid #222;
+      border-left: 3px solid #ff6b35;
+      border-radius: 8px;
+      padding: 20px 24px;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 14px;
+      color: #ccc;
+      line-height: 1.8;
+      margin: 16px 0;
+      white-space: pre;
+    }
+
+    .code-block .section-tag { color: #ff6b35; }
+    .code-block .lyric { color: #e0e0e0; }
+    .code-block .blank { color: transparent; }
+
+    /* Engine diagram */
+    .engine {
+      display: flex;
+      gap: 12px;
+      margin: 20px 0;
+      align-items: stretch;
+    }
+
+    .engine-input {
+      flex: 1;
+      background: #141414;
+      border: 1px solid #1e1e1e;
+      border-radius: 10px;
+      padding: 18px;
+      text-align: center;
+    }
+
+    .engine-input .icon { font-size: 24px; margin-bottom: 8px; }
+    .engine-input h4 { font-size: 13px; color: #fff; font-weight: 700; margin-bottom: 6px; }
+    .engine-input p { font-size: 12px; color: #555; margin: 0; }
+
+    .engine-plus {
+      display: flex;
+      align-items: center;
+      color: #333;
+      font-size: 20px;
+      font-weight: 300;
+    }
+
+    .engine-result {
+      background: #ff6b35;
+      border-radius: 10px;
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      text-align: center;
+      min-width: 130px;
+    }
+
+    .engine-result h4 { font-size: 13px; color: #000; font-weight: 800; }
+    .engine-result p { font-size: 11px; color: rgba(0,0,0,0.6); margin: 0; }
+
+    /* Setlist mockup */
+    .setlist-demo {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 10px;
+      padding: 12px;
+      margin: 16px 0;
+    }
+
+    .setlist-song {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #141414;
+      border: 1px solid #1e1e1e;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+    }
+
+    .setlist-song:last-child { margin-bottom: 0; }
+
+    .color-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .song-bar {
+      width: 4px;
+      border-radius: 2px;
+      align-self: stretch;
+      flex-shrink: 0;
+      min-height: 20px;
+    }
+
+    .setlist-song .song-title {
+      flex: 1;
+      font-size: 14px;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .setlist-song .song-meta {
+      font-size: 11px;
+      color: #555;
+    }
+
+    .launch-btn {
+      background: rgba(255,107,53,0.15);
+      border: 1px solid rgba(255,107,53,0.4);
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #ff6b35;
+      letter-spacing: 1px;
+    }
+
+    /* Enrollment steps */
+    .enroll-steps {
+      display: flex;
+      gap: 10px;
+      margin: 16px 0;
+      align-items: center;
+    }
+
+    .enroll-dot {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .enroll-dot.done { background: #ff6b35; color: #000; }
+    .enroll-dot.empty { background: #1e1e1e; border: 1.5px solid #333; color: #555; }
+
+    /* Install steps */
+    .steps { margin: 16px 0; }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      width: 30px;
+      height: 30px;
+      min-width: 30px;
+      background: #ff6b35;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 800;
+      color: #000;
+      margin-top: 2px;
+    }
+
+    .step-body h4 {
+      font-size: 15px;
+      color: #fff;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .step-body p {
+      font-size: 14px;
+      color: #666;
+      margin: 0;
+    }
+
+    /* Tip box */
+    .tip {
+      background: #111;
+      border: 1px solid #222;
+      border-left: 3px solid #4caf50;
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin: 20px 0;
+      font-size: 14px;
+      color: #888;
+    }
+
+    .tip strong { color: #4caf50; }
+
+    /* Highlight box */
+    .highlight {
+      background: #111;
+      border: 1px solid #222;
+      border-left: 3px solid #ff6b35;
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin: 20px 0;
+      font-size: 14px;
+      color: #888;
+    }
+
+    .highlight strong { color: #ff6b35; }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding: 48px 0 24px;
+      margin-top: 64px;
+      border-top: 1px solid #1a1a1a;
+      font-size: 12px;
+      color: #333;
+      letter-spacing: 1px;
+    }
+
+    /* Print styles */
+    @media print {
+      body { background: #fff; color: #111; padding: 0; }
+      .page { max-width: 100%; }
+      .header { border-color: #ddd; }
+      h2 { color: #cc4400; border-color: #eee; }
+      h3 { color: #000; }
+      p { color: #333; }
+      .card { background: #f9f9f9; border-color: #ddd; }
+      .card p { color: #555; }
+      .code-block { background: #f5f5f5; border-color: #ddd; color: #222; }
+      .engine-input { background: #f5f5f5; border-color: #ddd; }
+      .engine-input p { color: #777; }
+      .step-body p { color: #555; }
+      kbd { background: #f0f0f0; border-color: #ccc; color: #000; }
+      .tip { background: #f0fff0; border-color: #aaa; color: #444; }
+      .highlight { background: #fff8f5; border-color: #aaa; color: #444; }
+      .footer { color: #aaa; border-color: #eee; }
+      tbody td { color: #333; }
+      .flow-step { background: #f0f0f0; border-color: #ccc; }
+      .setlist-demo { background: #f9f9f9; border-color: #ddd; }
+      .setlist-song { background: #f0f0f0; border-color: #ddd; }
+      .setlist-song .song-title { color: #111; }
+      .launch-btn { background: #ffe8e0; color: #cc4400; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="icon">🎤</div>
+    <h1>Music Teleprompter</h1>
+    <div class="subtitle">Beat-synced lyrics for live performance — User Guide</div>
+  </div>
+
+  <!-- How It Works -->
+  <h2>How It Works</h2>
+  <p>The app has three screens that flow in order. You can also go straight from the setlist on the Home screen directly into the teleprompter without opening the editor.</p>
+  <div class="flow">
+    <div class="flow-step">🏠 Home / Setlist</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">✏️ Editor</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">📜 Teleprompter</div>
+  </div>
+
+  <!-- Screen 1 -->
+  <h2>Screen 1 — Home &amp; Setlist</h2>
+  <p>The landing screen. At the top are quick-start buttons; below them is your <strong style="color:#fff;">concert setlist</strong> — a list of all your saved song files.</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="tag">Option 1</div>
+      <h4>New Script</h4>
+      <p>Opens a blank editor so you can type or paste your lyrics from scratch.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Option 2</div>
+      <h4>Open File</h4>
+      <p>Load a .txt or .lrc lyrics file directly from your Mac.</p>
+    </div>
+  </div>
+
+  <h3>Concert Setlist</h3>
+  <p>Every song you save to the library appears as a card in the setlist. During a show you can tap a song's <strong style="color:#ff6b35;">LAUNCH</strong> button to jump straight into the teleprompter.</p>
+
+  <div class="setlist-demo">
+    <div class="setlist-song">
+      <div class="song-bar" style="background:#ff6b35;"></div>
+      <div class="color-dot" style="background:#ff6b35;"></div>
+      <div class="song-title">Burning Stage</div>
+      <div class="song-meta">May 5 · 3 min ago</div>
+      <div class="launch-btn">LAUNCH</div>
+    </div>
+    <div class="setlist-song">
+      <div class="song-bar" style="background:#4fc3f7;"></div>
+      <div class="color-dot" style="background:#4fc3f7;"></div>
+      <div class="song-title">Midnight Signal</div>
+      <div class="song-meta">May 4</div>
+      <div class="launch-btn">LAUNCH</div>
+    </div>
+    <div class="setlist-song">
+      <div class="song-bar" style="background:#66bb6a;"></div>
+      <div class="color-dot" style="background:#66bb6a;"></div>
+      <div class="song-title">Echo &amp; Fire</div>
+      <div class="song-meta">May 3</div>
+      <div class="launch-btn">LAUNCH</div>
+    </div>
+  </div>
+
+  <div class="cards" style="margin-top:16px;">
+    <div class="card">
+      <div class="tag">Drag to reorder</div>
+      <h4>Set Your Show Order</h4>
+      <p>Drag any song card up or down to arrange them in setlist order. The order is saved automatically.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Colour coding</div>
+      <h4>Colour per Song</h4>
+      <p>Tap the coloured dot on any card to pick one of 10 colours. Great for grouping songs by mood, key, or band member.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Edit</div>
+      <h4>Edit Button</h4>
+      <p>The pencil icon on each card opens the song in the editor so you can make changes before the show.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Delete</div>
+      <h4>Delete Button</h4>
+      <p>The trash icon removes the song from the library. A confirmation dialog prevents accidental deletion.</p>
+    </div>
+  </div>
+
+  <div class="tip">
+    <strong>Concert tip:</strong> Arrange your songs in show order before you go on stage. Then use the LAUNCH button on song 1. During the performance, the skip buttons in the teleprompter let you jump to the next or previous song without going back to the home screen.
+  </div>
+
+  <!-- Screen 2 -->
+  <h2>Screen 2 — Editor</h2>
+  <p>A split screen: type on the left, see a live preview on the right. The preview updates as you type.</p>
+
+  <h3>Script Format</h3>
+  <p>Write your lyrics in plain text. Use square brackets to mark sections:</p>
+
+  <div class="code-block"><span class="section-tag">[Intro | 4 bars]</span>
+<span class="blank">.</span>
+<span class="section-tag">[Verse 1]</span>
+<span class="lyric">Standing at the edge of the night</span>
+<span class="lyric">Every beat drops like a heartbeat ignite</span>
+<span class="blank">.</span>
+<span class="section-tag">[Chorus]</span>
+<span class="lyric">Let the music take control tonight</span>
+<span class="lyric">Lose yourself and find the light</span>
+<span class="blank">.</span>
+<span class="section-tag">[Bridge | 8 bars]</span>
+<span class="lyric">We rise we fall we find our way</span></div>
+
+  <div class="cards" style="margin-top:16px;">
+    <div class="card">
+      <div class="tag">Section tag</div>
+      <h4>[Chorus]</h4>
+      <p>Marks a section. Shown as a divider in the teleprompter so you can jump between sections.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Section with bars</div>
+      <h4>[Bridge | 8 bars]</h4>
+      <p>Same as above but also displays the bar count next to the label.</p>
+    </div>
+  </div>
+
+  <div class="tip">
+    <strong>Tip:</strong> Click the orange <strong>LAUNCH</strong> button in the toolbar to go to the teleprompter. Click <strong>Save to Setlist</strong> to add the song to your concert library on the Home screen.
+  </div>
+
+  <!-- Screen 3 -->
+  <h2>Screen 3 — Teleprompter</h2>
+  <p>Full dark screen with your lyrics centered. The active line (where you are now) is bright white. Lines above and below fade out so your eye naturally locks on the current line.</p>
+
+  <h3>Navigating Songs Mid-Show</h3>
+  <p>When you launch from the Home setlist, skip buttons appear in the bottom control bar alongside the position counter (e.g. <strong style="color:#fff;">2 / 5</strong>).</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="tag">Next song</div>
+      <h4>⏭ Skip Forward</h4>
+      <p>Jumps to the next song in your setlist. The lyrics change instantly — no need to go back to the home screen.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Previous song</div>
+      <h4>⏮ Skip Back</h4>
+      <p>Returns to the previous song. Useful if you need to repeat a song or go back after a mistake.</p>
+    </div>
+  </div>
+
+  <!-- Sync Engine -->
+  <h2>The Sync Engine — How Scrolling Works</h2>
+  <p>The scroll speed is calculated live from three inputs combined:</p>
+
+  <div class="engine">
+    <div class="engine-input">
+      <div class="icon">🥁</div>
+      <h4>Beat Detection</h4>
+      <p>Mic listens for bass hits and drums. Calculates your BPM in real time.</p>
+    </div>
+    <div class="engine-plus">+</div>
+    <div class="engine-input">
+      <div class="icon">🎤</div>
+      <h4>Voice Detection</h4>
+      <p>Detects when you're singing. Speeds up slightly when active, slows when silent.</p>
+    </div>
+    <div class="engine-plus">+</div>
+    <div class="engine-input">
+      <div class="icon">🎚️</div>
+      <h4>Manual Slider</h4>
+      <p>Your override. 0.1× to 5.0×. Overrides the other two if needed.</p>
+    </div>
+    <div class="engine-plus">=</div>
+    <div class="engine-result">
+      <h4>Scroll Speed</h4>
+      <p>Smooth, real-time</p>
+    </div>
+  </div>
+
+  <h3>Beat Detection</h3>
+  <p>The microphone feeds audio into an FFT (frequency analysis) algorithm 60 times per second. When it detects an energy spike — a kick drum, bass hit, or beat — it logs the time. From the timing between the last 8 beats it calculates your BPM. Faster BPM = faster scroll.</p>
+
+  <h3>Voice Detection</h3>
+  <p>Measures the loudness of your voice (RMS energy). When you are singing, the scroll speeds up by 15%. When you stop — between lines, taking a breath, or during an instrumental — the scroll slows to 30% speed so the lyrics don't run ahead of you.</p>
+
+  <h3>Manual Speed Slider</h3>
+  <p>The slider in the bottom control bar lets you set a speed multiplier from 0.1× (very slow) to 5.0× (very fast). Use <kbd>↑</kbd> and <kbd>↓</kbd> keys to nudge it by 0.1 at a time during a performance.</p>
+
+  <!-- Voice Fingerprinting -->
+  <h2>Voice Fingerprint — Your Voice, Not the Band's</h2>
+
+  <p>By default the app reacts to any loud sound — including drums, guitars, and crowd noise. <strong style="color:#fff;">Voice Fingerprinting</strong> trains the app to recognise your specific voice so that only <em>your</em> singing triggers the scroll speed change, even with a loud band playing behind you.</p>
+
+  <h3>How It Works</h3>
+  <p>You record 5 short samples of yourself singing. The app analyses the acoustic characteristics of your voice — the frequency patterns that make your voice unique — and builds a fingerprint. During a show, it compares every fraction of a second of audio against that fingerprint. The scroll only reacts when it detects a match.</p>
+
+  <h3>Setting Up Your Voice Profile</h3>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Open Settings</h4>
+        <p>Click the sliders icon in the bottom control bar (or use Settings from the menu).</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Find Voice Fingerprint</h4>
+        <p>Scroll to the VOICE FINGERPRINT section at the bottom of Settings. Click <strong>Enroll</strong>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>Record 5 samples</h4>
+        <p>Tap <strong>Record Sample</strong>, sing a phrase for 3 seconds, then repeat. You'll see the dots fill in as each sample is captured.</p>
+        <div class="enroll-steps" style="margin-top:12px;">
+          <div class="enroll-dot done">✓</div>
+          <div class="enroll-dot done">✓</div>
+          <div class="enroll-dot done">✓</div>
+          <div class="enroll-dot empty">4</div>
+          <div class="enroll-dot empty">5</div>
+        </div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Build Profile</h4>
+        <p>Once you have at least 3 samples (5 recommended), tap <strong>Build Profile</strong>. The profile is saved and active immediately.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="highlight">
+    <strong>Best practice:</strong> Enroll backstage in a quiet room before soundcheck. Once the profile is built it's saved permanently — you don't need to re-enroll for every show. You can re-enroll any time from Settings if your voice or microphone setup changes.
+  </div>
+
+  <div class="tip">
+    <strong>No profile?</strong> The app works fine without one — voice detection just reacts to overall volume as before. You can clear a profile and go back to this mode any time by tapping <strong>Clear</strong> in the Voice Fingerprint section of Settings.
+  </div>
+
+  <!-- Keyboard -->
+  <h2>Keyboard Shortcuts</h2>
+  <p>All controls work from the keyboard so you don't need to touch the mouse during a performance.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><kbd>Space</kbd></td><td>Play / Pause scrolling and microphone</td></tr>
+      <tr><td><kbd>↑</kbd></td><td>Speed up scroll by 0.1×</td></tr>
+      <tr><td><kbd>↓</kbd></td><td>Slow down scroll by 0.1×</td></tr>
+      <tr><td><kbd>→</kbd></td><td>Jump forward to the next section (e.g. skip to Chorus)</td></tr>
+      <tr><td><kbd>←</kbd></td><td>Jump back to the previous section</td></tr>
+      <tr><td><kbd>F</kbd></td><td>Toggle fullscreen mode</td></tr>
+      <tr><td><kbd>M</kbd></td><td>Toggle mirror mode (flips screen horizontally)</td></tr>
+      <tr><td><kbd>R</kbd></td><td>Reset back to the very first line</td></tr>
+      <tr><td><kbd>L</kbd></td><td>Toggle loop mode on / off</td></tr>
+      <tr><td><kbd>ESC</kbd></td><td>Exit teleprompter, go back</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Features -->
+  <h2>All Features</h2>
+
+  <div class="cards">
+    <div class="card">
+      <div class="tag">Setlist</div>
+      <h4>Concert Library</h4>
+      <p>All your saved songs in one list. Drag to reorder, colour-code by category, and LAUNCH any song in one tap.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Setlist</div>
+      <h4>In-Show Navigation</h4>
+      <p>Skip to the next or previous song without leaving the teleprompter. Position counter shows where you are (e.g. 2 / 5).</p>
+    </div>
+    <div class="card">
+      <div class="tag">AI Audio</div>
+      <h4>Voice Fingerprint</h4>
+      <p>Trains on your voice so the scroll reacts only to you — not the band, drums, or crowd noise.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Visual</div>
+      <h4>Active Line Highlight</h4>
+      <p>Current line is full white. Lines above and below fade gradually — the further away, the smaller and greyer they get.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Visual</div>
+      <h4>Section Headers</h4>
+      <p>[Chorus], [Verse 1] etc. appear as small dividers in the scroll so you can see your song structure at a glance.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Visual</div>
+      <h4>Karaoke Highlight</h4>
+      <p>Words in the active line light up in gold as they are reached. Can be toggled off in Settings.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Visual</div>
+      <h4>Fullscreen Mode</h4>
+      <p>Press F to hide everything except lyrics. Controls reappear when you move the mouse, then hide after 3 seconds.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Rig</div>
+      <h4>Mirror Mode</h4>
+      <p>Press M to flip the screen horizontally. For performers using a physical teleprompter glass or beam splitter in front of a mic.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Rehearsal</div>
+      <h4>Loop Mode</h4>
+      <p>Press L to loop between a start and end point. Repeats that section continuously for practice.</p>
+    </div>
+    <div class="card">
+      <div class="tag">Audio</div>
+      <h4>BPM Display</h4>
+      <p>Shows the detected BPM number live. A dot flashes on every detected beat. Green dot = voice detected, grey = silence.</p>
+    </div>
+    <div class="card">
+      <div class="tag">File</div>
+      <h4>LRC Support</h4>
+      <p>Supports timestamped .lrc files (standard karaoke format) in addition to plain .txt files.</p>
+    </div>
+    <div class="card">
+      <div class="tag">File</div>
+      <h4>Auto-save</h4>
+      <p>The editor saves your work silently in the background. Your last session is always available from the Home screen.</p>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <h2>Settings Panel</h2>
+  <p>Open by clicking the sliders icon in the bottom control bar.</p>
+
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>What It Does</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Font Size</td><td>24px to 120px. How large the lyrics appear on screen.</td></tr>
+      <tr><td>Default Speed</td><td>The starting speed multiplier when you launch.</td></tr>
+      <tr><td>Auto-scroll on Voice</td><td>Toggle whether voice detection affects scroll speed at all.</td></tr>
+      <tr><td>Voice Sensitivity</td><td>How loud you need to be for voice detection to activate. Raise if it's too sensitive to background noise.</td></tr>
+      <tr><td>Manual BPM Override</td><td>Turn on to ignore the mic's beat detection and set a fixed BPM manually.</td></tr>
+      <tr><td>Karaoke Highlight</td><td>Turn word-by-word gold highlighting on or off.</td></tr>
+      <tr><td>Mirror Mode</td><td>Save mirror as the default so it's always on when you launch.</td></tr>
+      <tr><td>Voice Fingerprint</td><td>Enroll your voice (5 samples), build a speaker profile, or clear it. When active, only your voice triggers scroll speed changes.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- Install -->
+  <h2>Installation (First Time)</h2>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h4>Open the DMG file</h4>
+        <p>Double-click MusicTeleprompter.dmg to open the installer window.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h4>Drag to Applications</h4>
+        <p>Drag the Music Teleprompter icon into the Applications folder shown in the window.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h4>First launch — Right-click to Open</h4>
+        <p>Go to Applications. Right-click the app icon → choose Open → click Open in the popup. You only need to do this once.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h4>Allow Microphone</h4>
+        <p>Click OK when macOS asks for microphone access. If you missed it: System Settings → Privacy &amp; Security → Microphone → enable Music Teleprompter.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <strong>Note:</strong> The "Apple could not verify" warning on first launch is normal for apps distributed outside the App Store. Right-clicking and choosing Open bypasses it permanently for this app.
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    MUSIC TELEPROMPTER &nbsp;·&nbsp; PROFESSIONAL LYRIC SYNC FOR LIVE PERFORMANCE
+  </div>
+
+</div>
+</body>
+</html>
