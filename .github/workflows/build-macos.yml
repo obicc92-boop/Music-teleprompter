@@ -16,6 +16,112 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Generate app icon and DMG background
+        run: |
+          pip3 install pillow
+          python3 << 'PYEOF'
+          from PIL import Image, ImageDraw
+          import os
+
+          ORANGE = (255, 107, 53, 255)
+          ORANGE_GLOW = (255, 107, 53, 40)
+          BG = (20, 20, 20, 255)
+          DOC = (30, 30, 30, 255)
+          LINE = (75, 75, 75, 255)
+
+          def make_icon(size):
+              img = Image.new('RGBA', (size, size), BG)
+              draw = ImageDraw.Draw(img)
+              s = size / 1024.0
+
+              # Document background
+              draw.rounded_rectangle(
+                  [int(110*s), int(90*s), int(830*s), int(910*s)],
+                  radius=max(2, int(44*s)), fill=DOC)
+
+              # Text lines (grey bars representing lyrics)
+              lines_cfg = [
+                  (180, 210, 620), (180, 282, 560), (180, 354, 620),
+                  (180, 498, 560), (180, 570, 620), (180, 642, 500),
+              ]
+              lh = max(2, int(24*s))
+              lr = max(1, int(12*s))
+              for (x1, y, x2) in lines_cfg:
+                  draw.rounded_rectangle(
+                      [int(x1*s), int(y*s), int(x2*s), int(y*s)+lh],
+                      radius=lr, fill=LINE)
+
+              # Active line glow
+              draw.rounded_rectangle(
+                  [int(130*s), int(398*s), int(770*s), int(466*s)],
+                  radius=max(2, int(18*s)), fill=ORANGE_GLOW)
+
+              # Active line (solid orange)
+              draw.rounded_rectangle(
+                  [int(180*s), int(410*s), int(720*s), int(452*s)],
+                  radius=max(1, int(13*s)), fill=ORANGE)
+
+              # Music note — head
+              nr = max(2, int(54*s))
+              nx, ny = int(800*s), int(820*s)
+              sw = max(2, int(24*s))
+              sh = int(190*s)
+              draw.ellipse([nx-nr, ny-nr, nx+nr, ny+nr], fill=ORANGE)
+              # Stem
+              draw.rounded_rectangle(
+                  [nx+nr-sw, ny-sh, nx+nr, ny],
+                  radius=max(1, sw//2), fill=ORANGE)
+              # Flag
+              draw.rounded_rectangle(
+                  [nx+nr-sw, ny-sh, nx+nr+int(90*s), ny-sh+sw],
+                  radius=max(1, sw//2), fill=ORANGE)
+
+              # Convert to RGB
+              bg = Image.new('RGB', img.size, (20, 20, 20))
+              bg.paste(img, mask=img.split()[3])
+              return bg
+
+          icon_dir = 'macos/Runner/Assets.xcassets/AppIcon.appiconset'
+          for size in [16, 32, 64, 128, 256, 512, 1024]:
+              make_icon(size).save(f'{icon_dir}/app_icon_{size}.png')
+              print(f'Icon {size}x{size} done')
+
+          # DMG background — 800x400 matching --window-size
+          W, H = 800, 400
+          bg = Image.new('RGB', (W, H), (10, 10, 10))
+          draw = ImageDraw.Draw(bg)
+
+          # Subtle dark gradient bands
+          for y in range(H):
+              t = abs(y - H / 2) / (H / 2)
+              v = int(10 + (1 - t) * 12)
+              draw.line([(0, y), (W, y)], fill=(v, v-2, v-3))
+
+          # Orange top accent bar
+          draw.rectangle([0, 0, W, 3], fill=(255, 107, 53))
+
+          # Title text (drawn as a rectangle since we avoid font dependencies)
+          # "MUSIC TELEPROMPTER" label area — keep it simple with shapes
+          # Orange underline beneath where title would be
+          draw.rectangle([W//2 - 120, 55, W//2 + 120, 58], fill=(255, 107, 53))
+
+          # Arrow from app icon area (200,185) toward Applications (600,185)
+          ay = 185
+          ax1, ax2 = 290, 490
+          draw.line([(ax1, ay), (ax2, ay)], fill=(255, 107, 53), width=3)
+          # Arrowhead
+          draw.polygon(
+              [(ax2, ay-9), (ax2+22, ay), (ax2, ay+9)],
+              fill=(255, 107, 53))
+
+          # Instruction band at bottom
+          draw.rectangle([0, 340, W, 400], fill=(18, 18, 18))
+          draw.rectangle([0, 340, W, 343], fill=(35, 35, 35))
+
+          bg.save('/tmp/dmg_background.png')
+          print('DMG background done')
+          PYEOF
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -41,6 +147,7 @@ jobs:
         run: |
           create-dmg \
             --volname "Music Teleprompter" \
+            --background "/tmp/dmg_background.png" \
             --window-pos 200 120 \
             --window-size 800 400 \
             --icon-size 100 \
