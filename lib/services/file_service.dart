@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -61,7 +62,36 @@ class FileService {
     return true;
   }
 
-  Future<List<({String title, String path, DateTime modified})>> listLibrary() async {
+  Future<void> saveSetlistMeta({
+    required List<String> orderedFilenames,
+    required Map<String, int> colorValues,
+  }) async {
+    final dir = await getScriptsDirectory();
+    final file = File('${dir.path}/_setlist.json');
+    await file.writeAsString(jsonEncode({
+      'order': orderedFilenames,
+      'colors': colorValues,
+    }));
+  }
+
+  Future<({List<String> order, Map<String, int> colors})> loadSetlistMeta() async {
+    final dir = await getScriptsDirectory();
+    final file = File('${dir.path}/_setlist.json');
+    if (!await file.exists()) {
+      return (order: <String>[], colors: <String, int>{});
+    }
+    try {
+      final raw = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final order = List<String>.from(raw['order'] as List? ?? []);
+      final rawColors = (raw['colors'] as Map?)?.cast<String, dynamic>() ?? {};
+      final colors = rawColors.map((k, v) => MapEntry(k, (v as num).toInt()));
+      return (order: order, colors: colors);
+    } catch (_) {
+      return (order: <String>[], colors: <String, int>{});
+    }
+  }
+
+  Future<List<({String title, String path, DateTime modified, int colorValue})>> listLibrary() async {
     final dir = await getScriptsDirectory();
     if (!await dir.exists()) return [];
     final entities = await dir.list().toList();
@@ -74,16 +104,34 @@ class FileService {
         })
         .toList();
 
-    final entries = <({String title, String path, DateTime modified})>[];
+    final meta = await loadSetlistMeta();
+
+    final entries = <({String title, String path, DateTime modified, int colorValue})>[];
     for (final f in files) {
       try {
         final stat = await f.stat();
-        final name = f.path.split('/').last
-            .replaceAll(RegExp(r'\.(txt|lrc)$'), '');
-        entries.add((title: name, path: f.path, modified: stat.modified));
+        final filename = f.path.split('/').last;
+        final title = filename.replaceAll(RegExp(r'\.(txt|lrc)$'), '');
+        final colorValue = meta.colors[filename] ?? 0xFF555555;
+        entries.add((
+          title: title,
+          path: f.path,
+          modified: stat.modified,
+          colorValue: colorValue,
+        ));
       } catch (_) {}
     }
-    entries.sort((a, b) => b.modified.compareTo(a.modified));
+
+    entries.sort((a, b) {
+      final af = a.path.split('/').last;
+      final bf = b.path.split('/').last;
+      final ai = meta.order.indexOf(af);
+      final bi = meta.order.indexOf(bf);
+      if (ai != -1 && bi != -1) return ai.compareTo(bi);
+      if (ai != -1) return -1;
+      if (bi != -1) return 1;
+      return b.modified.compareTo(a.modified);
+    });
     return entries;
   }
 

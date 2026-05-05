@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'beat_detector.dart';
 import 'voice_detection_layer.dart';
+import 'voice_profiler.dart';
 import '../utils/constants.dart';
 
 enum AudioEngineState { idle, starting, running, stopping, error }
@@ -25,6 +26,8 @@ class AudioEngine {
   Stream<BeatEvent> get beatStream => _beatController.stream;
   Stream<VoiceState> get voiceStream => _voiceController.stream;
   Stream<AudioEngineState> get stateStream => _stateController.stream;
+
+  VoiceProfiler? voiceProfiler;
 
   AudioEngineState get state => _state;
   double get currentBpm => _beatDetector.currentBpm;
@@ -117,6 +120,8 @@ class AudioEngine {
     if (!_voiceController.isClosed) {
       _voiceController.add(voiceState);
     }
+
+    voiceProfiler?.processChunk(samples);
   }
 
   List<double> _int16BytesToDoubles(Uint8List bytes) {

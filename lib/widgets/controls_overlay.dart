@@ -12,6 +12,9 @@ class ControlsOverlay extends StatefulWidget {
   final VoidCallback onMirrorToggle;
   final VoidCallback onSettings;
   final VoidCallback onBack;
+  final VoidCallback? onNextScript;
+  final VoidCallback? onPrevScript;
+  final String? setlistPosition;
   final bool isMirrorMode;
   final bool isFullscreen;
 
@@ -23,6 +26,9 @@ class ControlsOverlay extends StatefulWidget {
     required this.onMirrorToggle,
     required this.onSettings,
     required this.onBack,
+    this.onNextScript,
+    this.onPrevScript,
+    this.setlistPosition,
     required this.isMirrorMode,
     required this.isFullscreen,
   });
@@ -121,6 +127,37 @@ class _ControlsOverlayState extends State<ControlsOverlay>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               _backButton(),
+              if (widget.onPrevScript != null) ...[
+                const SizedBox(width: 6),
+                _iconButton(
+                  icon: Icons.skip_previous_rounded,
+                  size: 20,
+                  color: AppColors.sectionHeader,
+                  onTap: widget.onPrevScript!,
+                  tooltip: 'Previous song',
+                ),
+              ],
+              if (widget.setlistPosition != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  widget.setlistPosition!,
+                  style: const TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    fontSize: 11,
+                    color: AppColors.sectionHeader,
+                  ),
+                ),
+              ],
+              if (widget.onNextScript != null) ...[
+                const SizedBox(width: 6),
+                _iconButton(
+                  icon: Icons.skip_next_rounded,
+                  size: 20,
+                  color: AppColors.accent,
+                  onTap: widget.onNextScript!,
+                  tooltip: 'Next song',
+                ),
+              ],
               const SizedBox(width: 16),
               _playPauseButton(state),
               const SizedBox(width: 20),

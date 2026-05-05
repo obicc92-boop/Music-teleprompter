@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
-import '../services/settings_service.dart';
 import '../engine/sync_engine.dart';
+import '../engine/voice_profiler.dart';
+import '../services/settings_service.dart';
+import '../services/voice_profile_service.dart';
 import '../utils/constants.dart';
+import '../widgets/enrollment_dialog.dart';
 
 class SettingsView extends StatefulWidget {
   final AppSettings settings;
   final SyncEngine syncEngine;
+  final VoiceProfiler voiceProfiler;
+  final VoiceProfileService voiceProfileService;
   final void Function(AppSettings) onChanged;
   final VoidCallback onClose;
 
@@ -13,6 +18,8 @@ class SettingsView extends StatefulWidget {
     super.key,
     required this.settings,
     required this.syncEngine,
+    required this.voiceProfiler,
+    required this.voiceProfileService,
     required this.onChanged,
     required this.onClose,
   });
@@ -84,6 +91,9 @@ class _SettingsViewState extends State<SettingsView> {
               _settings.mirrorMode,
               (v) => _update(_settings.copyWith(mirrorMode: v)),
             ),
+            const SizedBox(height: 16),
+            _section('VOICE FINGERPRINT'),
+            _voiceFingerprintRow(),
             const SizedBox(height: 24),
             _closeButton(),
           ],
@@ -268,6 +278,105 @@ class _SettingsViewState extends State<SettingsView> {
             inactiveTrackColor: AppColors.surfaceElevated,
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _voiceFingerprintRow() {
+    return ListenableBuilder(
+      listenable: widget.voiceProfiler,
+      builder: (context, _) {
+        final profiler = widget.voiceProfiler;
+        final hasProfile = profiler.hasProfile;
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: [
+              Icon(
+                hasProfile
+                    ? Icons.record_voice_over_rounded
+                    : Icons.mic_off_rounded,
+                size: 16,
+                color: hasProfile ? AppColors.accent : AppColors.sectionHeader,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  hasProfile
+                      ? 'Voice profile active'
+                      : 'No profile — scrolls on any sound',
+                  style: TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    fontSize: 12,
+                    color: hasProfile
+                        ? AppColors.activeLine
+                        : AppColors.sectionHeader,
+                  ),
+                ),
+              ),
+              if (hasProfile)
+                _smallButton(
+                  label: 'Clear',
+                  color: const Color(0xFFEF5350),
+                  onTap: () async {
+                    profiler.clearProfile();
+                    await widget.voiceProfileService.delete();
+                  },
+                ),
+              const SizedBox(width: 8),
+              _smallButton(
+                label: hasProfile ? 'Re-enroll' : 'Enroll',
+                color: AppColors.accent,
+                onTap: () => _openEnrollment(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _openEnrollment() {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => Center(
+        child: EnrollmentDialog(
+          profiler: widget.voiceProfiler,
+          onProfileBuilt: () async {
+            final vector = widget.voiceProfiler.profileVector;
+            if (vector != null) {
+              await widget.voiceProfileService.save(List<double>.from(vector));
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _smallButton({
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: AppTextStyles.fontFamily,
+            fontSize: 11,
+            color: color,
+          ),
+        ),
       ),
     );
   }

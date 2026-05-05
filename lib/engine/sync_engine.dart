@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'audio_engine.dart';
 import 'beat_detector.dart';
 import 'voice_detection_layer.dart';
+import 'voice_profiler.dart';
 import '../utils/constants.dart';
 
 enum PlayState { stopped, playing, paused }
@@ -63,6 +64,7 @@ class SyncEngine extends ChangeNotifier {
   bool _useManualBpm = false;
   double _manualBpm = AudioConstants.defaultBpm;
   bool _autoScrollOnVoice = true;
+  VoiceProfiler? _voiceProfiler;
 
   SyncEngineState get state => _state;
   PlayState get playState => _state.playState;
@@ -93,11 +95,20 @@ class SyncEngine extends ChangeNotifier {
   }
 
   void updateFromVoice(VoiceState voiceState) {
+    // When a voice profile is active, use speaker-match instead of raw energy
+    final isActive = (_voiceProfiler?.hasProfile ?? false)
+        ? (_voiceProfiler!.isVoiceMatch && voiceState.isActive)
+        : voiceState.isActive;
     _updateState(_state.copyWith(
-      isVoiceActive: voiceState.isActive,
+      isVoiceActive: isActive,
       voiceEnergy: voiceState.smoothedEnergy,
     ));
     _recomputeSpeed();
+  }
+
+  void setVoiceProfiler(VoiceProfiler? profiler) {
+    _voiceProfiler = profiler;
+    _audioEngine.voiceProfiler = profiler;
   }
 
   void _recomputeSpeed() {

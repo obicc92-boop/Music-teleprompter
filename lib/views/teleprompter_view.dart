@@ -16,6 +16,9 @@ class TeleprompterView extends StatefulWidget {
   final AppSettings settings;
   final VoidCallback onBack;
   final VoidCallback onSettings;
+  final VoidCallback? onNextScript;
+  final VoidCallback? onPrevScript;
+  final String? setlistPosition;
 
   const TeleprompterView({
     super.key,
@@ -24,6 +27,9 @@ class TeleprompterView extends StatefulWidget {
     required this.settings,
     required this.onBack,
     required this.onSettings,
+    this.onNextScript,
+    this.onPrevScript,
+    this.setlistPosition,
   });
 
   @override
@@ -98,6 +104,9 @@ class _TeleprompterViewState extends State<TeleprompterView>
                 onMirrorToggle: _toggleMirror,
                 onSettings: _openSettings,
                 onBack: _handleBack,
+                onNextScript: widget.onNextScript,
+                onPrevScript: widget.onPrevScript,
+                setlistPosition: widget.setlistPosition,
                 isMirrorMode: _isMirrorMode,
                 isFullscreen: _isFullscreen,
               ),
