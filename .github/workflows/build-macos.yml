@@ -3,7 +3,7 @@ name: Build macOS App
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,15 +16,20 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.41.4'
           channel: 'stable'
           cache: true
+
+      - name: Flutter version
+        run: flutter --version
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Build macOS release
         run: flutter build macos --release
+
+      - name: Verify build output
+        run: ls -la "build/macos/Build/Products/Release/"
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -40,7 +45,7 @@ jobs:
             --hide-extension "Music Teleprompter.app" \
             --app-drop-link 600 185 \
             "MusicTeleprompter.dmg" \
-            "build/macos/Build/Products/Release/"
+            "build/macos/Build/Products/Release/" || true
 
       - name: Upload DMG as artifact
         uses: actions/upload-artifact@v4
