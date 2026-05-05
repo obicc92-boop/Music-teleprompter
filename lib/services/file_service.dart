@@ -52,6 +52,48 @@ class FileService {
     return scriptsDir;
   }
 
+  Future<bool> saveToLibrary(String content, String title) async {
+    final dir = await getScriptsDirectory();
+    final safe = title.replaceAll(RegExp(r'[^\w\s\-]'), '').trim();
+    final name = safe.isEmpty ? 'untitled' : safe;
+    final file = File('${dir.path}/$name.txt');
+    await file.writeAsString(content);
+    return true;
+  }
+
+  Future<List<({String title, String path, DateTime modified})>> listLibrary() async {
+    final dir = await getScriptsDirectory();
+    if (!await dir.exists()) return [];
+    final entities = await dir.list().toList();
+    final files = entities
+        .whereType<File>()
+        .where((f) {
+          final name = f.path.split('/').last;
+          return (name.endsWith('.txt') || name.endsWith('.lrc')) &&
+              !name.startsWith('_');
+        })
+        .toList();
+
+    final entries = <({String title, String path, DateTime modified})>[];
+    for (final f in files) {
+      try {
+        final stat = await f.stat();
+        final name = f.path.split('/').last
+            .replaceAll(RegExp(r'\.(txt|lrc)$'), '');
+        entries.add((title: name, path: f.path, modified: stat.modified));
+      } catch (_) {}
+    }
+    entries.sort((a, b) => b.modified.compareTo(a.modified));
+    return entries;
+  }
+
+  Future<void> deleteFromLibrary(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   Future<List<String>> listSavedScripts() async {
     final dir = await getScriptsDirectory();
     final files = await dir

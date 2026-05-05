@@ -90,6 +90,19 @@ class _EditorViewState extends State<EditorView> {
     if (mounted) setState(() => _isDirty = false);
   }
 
+  Future<void> _saveToLibrary() async {
+    await _fileService.saveToLibrary(_textController.text, _currentTitle);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Saved to setlist.'),
+          backgroundColor: AppColors.surface,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   void _launch() {
     final script = ScriptParser.parse(_textController.text, title: _currentTitle);
     if (script.isEmpty) {
@@ -101,6 +114,7 @@ class _EditorViewState extends State<EditorView> {
       );
       return;
     }
+    _fileService.saveToLibrary(_textController.text, _currentTitle);
     widget.onLaunchTeleprompter(script);
   }
 
@@ -140,6 +154,12 @@ class _EditorViewState extends State<EditorView> {
             icon: Icons.save_rounded,
             label: _isDirty ? 'Save*' : 'Save',
             onTap: _saveFile,
+          ),
+          const SizedBox(width: 8),
+          _toolbarButton(
+            icon: Icons.library_add_rounded,
+            label: 'Save to Setlist',
+            onTap: _saveToLibrary,
           ),
           const SizedBox(width: 16),
           Expanded(

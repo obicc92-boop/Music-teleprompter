@@ -32,6 +32,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   Script _activeScript = Script.empty();
   AppSettings _settings = const AppSettings();
   bool _showSettings = false;
+  bool _launchedFromHome = false;
 
   late final AudioEngine _audioEngine;
   late final SyncEngine _syncEngine;
@@ -83,9 +84,24 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     setState(() => _screen = AppScreen.home);
   }
 
+  void _launchScriptDirect(Script script) {
+    setState(() {
+      _activeScript = script;
+      _screen = AppScreen.teleprompter;
+      _launchedFromHome = true;
+    });
+  }
+
   void _backToEditor() {
     _syncEngine.stop();
-    setState(() => _screen = AppScreen.editor);
+    if (_launchedFromHome) {
+      setState(() {
+        _screen = AppScreen.home;
+        _launchedFromHome = false;
+      });
+    } else {
+      setState(() => _screen = AppScreen.editor);
+    }
   }
 
   @override
@@ -117,7 +133,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   Widget _buildCurrentScreen() {
     switch (_screen) {
       case AppScreen.home:
-        return HomeView(onOpenScript: _openScript);
+        return HomeView(
+          onOpenScript: _openScript,
+          onLaunchScript: _launchScriptDirect,
+        );
       case AppScreen.editor:
         return EditorView(
           initialScript: _activeScript,
