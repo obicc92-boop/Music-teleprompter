@@ -1,0 +1,56 @@
+name: music_teleprompter
+description: "Professional macOS teleprompter for music performance — lyrics, beat sync, vocal detection."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Audio capture (microphone PCM stream)
+  record: ^5.2.0
+
+  # Runtime permissions (microphone)
+  permission_handler: ^11.3.1
+
+  # macOS window management (fullscreen, title bar)
+  window_manager: ^0.4.3
+
+  # File picker (open/save script files)
+  file_picker: ^8.1.2
+
+  # Local storage paths
+  path_provider: ^2.1.4
+
+  # Persist settings
+  shared_preferences: ^2.3.3
+
+  # FFT for beat/onset detection
+  fftea: ^1.4.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/scripts/
+    - assets/fonts/
+
+  fonts:
+    - family: TeleprompterMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
