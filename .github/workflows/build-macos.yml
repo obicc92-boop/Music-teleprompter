@@ -18,7 +18,7 @@ jobs:
 
       - name: Generate app icon and DMG background
         run: |
-          pip3 install pillow
+          pip3 install pillow --break-system-packages
           python3 << 'PYEOF'
           from PIL import Image, ImageDraw
           import os
