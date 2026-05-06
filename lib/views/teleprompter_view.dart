@@ -52,6 +52,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
     _scrollEngine = ScrollEngine(syncEngine: widget.syncEngine);
     _scrollEngine.attach(this);
     _scrollEngine.setScript(widget.script, _effectiveLineHeight);
+    _scrollEngine.start();
   }
 
   double get _effectiveLineHeight => _settings.fontSize * 2.0;
