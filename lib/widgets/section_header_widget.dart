@@ -6,6 +6,7 @@ class SectionHeaderWidget extends StatelessWidget {
   final int? barCount;
   final double fontSize;
   final bool isActive;
+  final String? displayFont;
 
   const SectionHeaderWidget({
     super.key,
@@ -13,6 +14,7 @@ class SectionHeaderWidget extends StatelessWidget {
     required this.fontSize,
     this.barCount,
     this.isActive = false,
+    this.displayFont,
   });
 
   @override
@@ -26,7 +28,7 @@ class SectionHeaderWidget extends StatelessWidget {
           const SizedBox(width: 16),
           Text(
             barCount != null ? '$label  ·  $barCount BARS' : label,
-            style: AppTextStyles.sectionHeader(fontSize).copyWith(
+            style: AppTextStyles.sectionHeader(fontSize, displayFont: displayFont).copyWith(
               color: isActive ? AppColors.accent : AppColors.sectionHeader,
             ),
           ),

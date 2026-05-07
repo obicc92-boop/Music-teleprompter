@@ -23,6 +23,7 @@ class EditorView extends StatefulWidget {
 
 class _EditorViewState extends State<EditorView> {
   late final TextEditingController _textController;
+  late final TextEditingController _titleController;
   late final FileService _fileService;
   Script _previewScript = Script.empty();
   String _currentTitle = 'Untitled';
@@ -30,22 +31,41 @@ class _EditorViewState extends State<EditorView> {
   Timer? _parseDebounce;
   bool _isDirty = false;
 
+  static const _defaultTitle = 'Untitled';
+
   @override
   void initState() {
     super.initState();
     _fileService = FileService();
-    _textController = TextEditingController(text: widget.initialScript.rawText);
     _currentTitle = widget.initialScript.title;
+    _textController = TextEditingController(text: widget.initialScript.rawText);
+    _titleController = TextEditingController(text: _currentTitle);
     _previewScript = widget.initialScript;
     _textController.addListener(_onTextChanged);
+
+    // Auto-select the title and focus it so the user immediately knows to rename
+    if (_currentTitle == _defaultTitle) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _titleController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _titleController.text.length,
+        );
+        FocusScope.of(context).requestFocus(_titleFocus);
+      });
+    }
+
     _scheduleAutosave();
   }
+
+  final _titleFocus = FocusNode();
 
   @override
   void dispose() {
     _autosaveTimer?.cancel();
     _parseDebounce?.cancel();
     _textController.dispose();
+    _titleController.dispose();
+    _titleFocus.dispose();
     super.dispose();
   }
 
@@ -82,6 +102,7 @@ class _EditorViewState extends State<EditorView> {
       _textController.text = result.content;
       _isDirty = false;
     });
+    _titleController.text = result.title;
     _reparseScript();
   }
 
@@ -164,6 +185,8 @@ class _EditorViewState extends State<EditorView> {
           const SizedBox(width: 16),
           Expanded(
             child: TextField(
+              controller: _titleController,
+              focusNode: _titleFocus,
               decoration: const InputDecoration(
                 hintText: 'Song title...',
                 hintStyle: TextStyle(color: AppColors.inactiveLine),
@@ -175,10 +198,6 @@ class _EditorViewState extends State<EditorView> {
                 fontSize: 14,
                 color: AppColors.activeLine,
               ),
-              controller: TextEditingController(text: _currentTitle)
-                ..selection = TextSelection.collapsed(
-                  offset: _currentTitle.length,
-                ),
               onChanged: (v) => setState(() => _currentTitle = v),
             ),
           ),

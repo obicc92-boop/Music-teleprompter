@@ -6,6 +6,9 @@ import '../services/voice_profile_service.dart';
 import '../utils/constants.dart';
 import '../widgets/enrollment_dialog.dart';
 
+// Re-export so callers don't need a separate import
+export '../utils/constants.dart' show DisplayFont;
+
 class SettingsView extends StatefulWidget {
   final AppSettings settings;
   final SyncEngine syncEngine;
@@ -44,6 +47,7 @@ class _SettingsViewState extends State<SettingsView> {
     _service.save(updated);
     widget.onChanged(updated);
     widget.syncEngine.updateVoiceSensitivity(updated.voiceSensitivity);
+    widget.syncEngine.setManualMultiplier(updated.scrollSpeedMultiplier);
     if (updated.useManualBpm) {
       widget.syncEngine.setManualBpm(updated.manualBpmOverride);
     }
@@ -53,20 +57,24 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.of(context).size.height - 80;
     return Material(
       color: AppColors.surface,
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 420,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 420),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             _header(),
             const SizedBox(height: 20),
             _section('DISPLAY'),
             _fontSizeRow(),
+            const SizedBox(height: 12),
+            _fontPickerRow(),
             const SizedBox(height: 16),
             _section('SCROLL'),
             _speedRow(),
@@ -74,6 +82,11 @@ class _SettingsViewState extends State<SettingsView> {
               'Auto-scroll on voice',
               _settings.autoScrollOnVoice,
               (v) => _update(_settings.copyWith(autoScrollOnVoice: v)),
+            ),
+            _toggleRow(
+              'Auto-advance to next song',
+              _settings.autoAdvance,
+              (v) => _update(_settings.copyWith(autoAdvance: v)),
             ),
             const SizedBox(height: 16),
             _section('AUDIO'),
@@ -86,11 +99,9 @@ class _SettingsViewState extends State<SettingsView> {
               _settings.karaokeMode,
               (v) => _update(_settings.copyWith(karaokeMode: v)),
             ),
-            _toggleRow(
-              'Mirror mode',
-              _settings.mirrorMode,
-              (v) => _update(_settings.copyWith(mirrorMode: v)),
-            ),
+            const SizedBox(height: 16),
+            _section('FOOT PEDAL'),
+            _pedalActionRow(),
             const SizedBox(height: 16),
             _section('VOICE FINGERPRINT'),
             _voiceFingerprintRow(),
@@ -98,6 +109,7 @@ class _SettingsViewState extends State<SettingsView> {
             _closeButton(),
           ],
         ),
+      ),
       ),
     );
   }
@@ -149,6 +161,86 @@ class _SettingsViewState extends State<SettingsView> {
       max: AppDimensions.maxFontSize,
       displayValue: '${_settings.fontSize.round()}px',
       onChanged: (v) => _update(_settings.copyWith(fontSize: v)),
+    );
+  }
+
+  Widget _fontPickerRow() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 130,
+            child: Text(
+              'Teleprompter Font',
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 13,
+                color: AppColors.inactiveLine,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: DisplayFont.options.map((font) {
+                final isSelected = _settings.displayFont == font.family;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: () =>
+                        _update(_settings.copyWith(displayFont: font.family)),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? AppColors.accent.withValues(alpha: 0.15)
+                            : AppColors.surfaceElevated,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppColors.accent
+                              : Colors.transparent,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Aa',
+                            style: TextStyle(
+                              fontFamily: font.family,
+                              fontSize: 15,
+                              color: isSelected
+                                  ? AppColors.accent
+                                  : AppColors.inactiveLine,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            font.label,
+                            style: TextStyle(
+                              fontFamily: AppTextStyles.fontFamily,
+                              fontSize: 9,
+                              color: isSelected
+                                  ? AppColors.accent
+                                  : AppColors.sectionHeader,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -279,6 +371,69 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _pedalActionRow() {
+    const actions = [
+      ('nextSection', 'Next Section'),
+      ('nextSong', 'Next Song'),
+      ('playPause', 'Play / Pause'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            children: actions.map((entry) {
+              final (value, label) = entry;
+              final isSelected = _settings.pedalAction == value;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: GestureDetector(
+                  onTap: () => _update(_settings.copyWith(pedalAction: value)),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppColors.accent.withValues(alpha: 0.15)
+                          : AppColors.surfaceElevated,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected ? AppColors.accent : Colors.transparent,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontFamily: AppTextStyles.fontFamily,
+                        fontSize: 11,
+                        color: isSelected ? AppColors.accent : AppColors.inactiveLine,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(bottom: 4),
+          child: Text(
+            'PageDown / Enter = forward  ·  PageUp = back\nCompatible with AirTurn, PageFlip, and similar HID pedals',
+            style: TextStyle(
+              fontFamily: AppTextStyles.fontFamily,
+              fontSize: 10,
+              color: AppColors.sectionHeader,
+              height: 1.6,
+            ),
+          ),
+        ),
+      ],
     );
   }
 

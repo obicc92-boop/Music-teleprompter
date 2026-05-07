@@ -3,13 +3,20 @@ import 'package:flutter/services.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
 
+// Pedal action values — match AppSettings.pedalAction strings
+// 'nextSection' : PageDown = next section, PageUp = prev section
+// 'nextSong'    : PageDown = next song, PageUp = prev song
+// 'playPause'   : PageDown / Enter = play/pause toggle
+
 class TeleprompterKeyboardHandler extends StatefulWidget {
   final Widget child;
   final SyncEngine syncEngine;
   final ScrollEngine scrollEngine;
   final VoidCallback onToggleFullscreen;
-  final VoidCallback onToggleMirror;
   final VoidCallback onBack;
+  final VoidCallback? onNextScript;
+  final VoidCallback? onPrevScript;
+  final String pedalAction;
 
   const TeleprompterKeyboardHandler({
     super.key,
@@ -17,8 +24,10 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
     required this.syncEngine,
     required this.scrollEngine,
     required this.onToggleFullscreen,
-    required this.onToggleMirror,
     required this.onBack,
+    this.onNextScript,
+    this.onPrevScript,
+    this.pedalAction = 'nextSection',
   });
 
   @override
@@ -85,12 +94,6 @@ class _TeleprompterKeyboardHandlerState
       return KeyEventResult.handled;
     }
 
-    // M — mirror
-    if (key == LogicalKeyboardKey.keyM) {
-      widget.onToggleMirror();
-      return KeyEventResult.handled;
-    }
-
     // R — reset to start
     if (key == LogicalKeyboardKey.keyR) {
       widget.scrollEngine.resetToStart();
@@ -103,9 +106,46 @@ class _TeleprompterKeyboardHandlerState
       return KeyEventResult.handled;
     }
 
+    // N — next song in setlist
+    if (key == LogicalKeyboardKey.keyN) {
+      widget.onNextScript?.call();
+      return KeyEventResult.handled;
+    }
+
+    // P — previous song in setlist
+    if (key == LogicalKeyboardKey.keyP) {
+      widget.onPrevScript?.call();
+      return KeyEventResult.handled;
+    }
+
     // ESC — back to editor
     if (key == LogicalKeyboardKey.escape) {
       widget.onBack();
+      return KeyEventResult.handled;
+    }
+
+    // Foot pedal mappings (PageDown = forward, PageUp = back, Enter = alternate)
+    if (key == LogicalKeyboardKey.pageDown || key == LogicalKeyboardKey.enter) {
+      switch (widget.pedalAction) {
+        case 'nextSection':
+          widget.scrollEngine.jumpToNextSection();
+        case 'nextSong':
+          widget.onNextScript?.call();
+        case 'playPause':
+          widget.syncEngine.togglePlayPause();
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.pageUp) {
+      switch (widget.pedalAction) {
+        case 'nextSection':
+          widget.scrollEngine.jumpToPrevSection();
+        case 'nextSong':
+          widget.onPrevScript?.call();
+        case 'playPause':
+          widget.syncEngine.togglePlayPause();
+      }
       return KeyEventResult.handled;
     }
 

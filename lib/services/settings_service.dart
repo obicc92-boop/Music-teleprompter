@@ -7,9 +7,11 @@ class AppSettings {
   final double voiceSensitivity;
   final double manualBpmOverride;
   final bool useManualBpm;
-  final bool mirrorMode;
   final bool karaokeMode;
   final bool autoScrollOnVoice;
+  final bool autoAdvance;
+  final String pedalAction;
+  final String displayFont;
 
   const AppSettings({
     this.fontSize = AppDimensions.defaultFontSize,
@@ -17,9 +19,11 @@ class AppSettings {
     this.voiceSensitivity = AudioConstants.voiceEnergyThreshold,
     this.manualBpmOverride = AudioConstants.defaultBpm,
     this.useManualBpm = false,
-    this.mirrorMode = false,
     this.karaokeMode = true,
     this.autoScrollOnVoice = true,
+    this.autoAdvance = true,
+    this.pedalAction = 'nextSection',
+    this.displayFont = AppTextStyles.fontFamily,
   });
 
   AppSettings copyWith({
@@ -28,9 +32,11 @@ class AppSettings {
     double? voiceSensitivity,
     double? manualBpmOverride,
     bool? useManualBpm,
-    bool? mirrorMode,
     bool? karaokeMode,
     bool? autoScrollOnVoice,
+    bool? autoAdvance,
+    String? pedalAction,
+    String? displayFont,
   }) {
     return AppSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -38,9 +44,11 @@ class AppSettings {
       voiceSensitivity: voiceSensitivity ?? this.voiceSensitivity,
       manualBpmOverride: manualBpmOverride ?? this.manualBpmOverride,
       useManualBpm: useManualBpm ?? this.useManualBpm,
-      mirrorMode: mirrorMode ?? this.mirrorMode,
       karaokeMode: karaokeMode ?? this.karaokeMode,
       autoScrollOnVoice: autoScrollOnVoice ?? this.autoScrollOnVoice,
+      autoAdvance: autoAdvance ?? this.autoAdvance,
+      pedalAction: pedalAction ?? this.pedalAction,
+      displayFont: displayFont ?? this.displayFont,
     );
   }
 }
@@ -51,9 +59,11 @@ class SettingsService {
   static const _kVoiceSensitivity = 'voice_sensitivity';
   static const _kManualBpm = 'manual_bpm';
   static const _kUseManualBpm = 'use_manual_bpm';
-  static const _kMirrorMode = 'mirror_mode';
   static const _kKaraokeMode = 'karaoke_mode';
   static const _kAutoScroll = 'auto_scroll_on_voice';
+  static const _kAutoAdvance = 'auto_advance';
+  static const _kPedalAction = 'pedal_action';
+  static const _kDisplayFont = 'display_font';
 
   Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -63,9 +73,11 @@ class SettingsService {
       voiceSensitivity: prefs.getDouble(_kVoiceSensitivity) ?? AudioConstants.voiceEnergyThreshold,
       manualBpmOverride: prefs.getDouble(_kManualBpm) ?? AudioConstants.defaultBpm,
       useManualBpm: prefs.getBool(_kUseManualBpm) ?? false,
-      mirrorMode: prefs.getBool(_kMirrorMode) ?? false,
       karaokeMode: prefs.getBool(_kKaraokeMode) ?? true,
       autoScrollOnVoice: prefs.getBool(_kAutoScroll) ?? true,
+      autoAdvance: prefs.getBool(_kAutoAdvance) ?? true,
+      pedalAction: prefs.getString(_kPedalAction) ?? 'nextSection',
+      displayFont: prefs.getString(_kDisplayFont) ?? AppTextStyles.fontFamily,
     );
   }
 
@@ -76,8 +88,10 @@ class SettingsService {
     await prefs.setDouble(_kVoiceSensitivity, settings.voiceSensitivity);
     await prefs.setDouble(_kManualBpm, settings.manualBpmOverride);
     await prefs.setBool(_kUseManualBpm, settings.useManualBpm);
-    await prefs.setBool(_kMirrorMode, settings.mirrorMode);
     await prefs.setBool(_kKaraokeMode, settings.karaokeMode);
     await prefs.setBool(_kAutoScroll, settings.autoScrollOnVoice);
+    await prefs.setBool(_kAutoAdvance, settings.autoAdvance);
+    await prefs.setString(_kPedalAction, settings.pedalAction);
+    await prefs.setString(_kDisplayFont, settings.displayFont);
   }
 }

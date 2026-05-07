@@ -16,7 +16,6 @@ class SyncEngineState {
   final double manualMultiplier;
   final PlayState playState;
   final AudioEngineState audioState;
-  final double targetScrollSpeed;
 
   const SyncEngineState({
     this.bpm = AudioConstants.defaultBpm,
@@ -26,7 +25,6 @@ class SyncEngineState {
     this.manualMultiplier = ScrollConstants.defaultSpeedMultiplier,
     this.playState = PlayState.stopped,
     this.audioState = AudioEngineState.idle,
-    this.targetScrollSpeed = 0.0,
   });
 
   SyncEngineState copyWith({
@@ -37,7 +35,6 @@ class SyncEngineState {
     double? manualMultiplier,
     PlayState? playState,
     AudioEngineState? audioState,
-    double? targetScrollSpeed,
   }) {
     return SyncEngineState(
       bpm: bpm ?? this.bpm,
@@ -47,7 +44,6 @@ class SyncEngineState {
       manualMultiplier: manualMultiplier ?? this.manualMultiplier,
       playState: playState ?? this.playState,
       audioState: audioState ?? this.audioState,
-      targetScrollSpeed: targetScrollSpeed ?? this.targetScrollSpeed,
     );
   }
 }
@@ -80,22 +76,19 @@ class SyncEngine extends ChangeNotifier {
   }
 
   void _wireStreams() {
-    _audioStateSub = _audioEngine.stateStream.listen((audioState) {
-      _updateState(_state.copyWith(audioState: audioState));
+    _audioStateSub = _audioEngine.stateStream.listen((s) {
+      _updateState(_state.copyWith(audioState: s));
     });
-
-    _beatSub = _audioEngine.beatStream.listen(updateFromBeat);
-    _voiceSub = _audioEngine.voiceStream.listen(updateFromVoice);
+    _beatSub = _audioEngine.beatStream.listen(_onBeat);
+    _voiceSub = _audioEngine.voiceStream.listen(_onVoice);
   }
 
-  void updateFromBeat(BeatEvent event) {
+  void _onBeat(BeatEvent event) {
     if (_useManualBpm) return;
     _updateState(_state.copyWith(bpm: event.estimatedBpm));
-    _recomputeSpeed();
   }
 
-  void updateFromVoice(VoiceState voiceState) {
-    // When a voice profile is active, use speaker-match instead of raw energy
+  void _onVoice(VoiceState voiceState) {
     final isActive = (_voiceProfiler?.hasProfile ?? false)
         ? (_voiceProfiler!.isVoiceMatch && voiceState.isActive)
         : voiceState.isActive;
@@ -103,7 +96,6 @@ class SyncEngine extends ChangeNotifier {
       isVoiceActive: isActive,
       voiceEnergy: voiceState.smoothedEnergy,
     ));
-    _recomputeSpeed();
   }
 
   void setVoiceProfiler(VoiceProfiler? profiler) {
@@ -111,41 +103,34 @@ class SyncEngine extends ChangeNotifier {
     _audioEngine.voiceProfiler = profiler;
   }
 
-  void _recomputeSpeed() {
-    final target = computeScrollSpeed();
-    _updateState(_state.copyWith(targetScrollSpeed: target));
-  }
-
-  double computeScrollSpeed() {
-    if (_state.playState != PlayState.playing) return 0.0;
+  /// Called every frame by ScrollEngine. Computes target fresh from current
+  /// state and smooths toward it — single smoothing pass, no stale targets.
+  double tickScrollSpeed(double dt) {
+    if (_state.playState != PlayState.playing) {
+      _smoothedScrollSpeed = 0.0;
+      return 0.0;
+    }
 
     final effectiveBpm = _useManualBpm ? _manualBpm : _state.bpm;
     final bpmFactor = effectiveBpm / AudioConstants.defaultBpm;
 
-    double voiceFactor = 1.0;
+    double voiceFactor;
     if (_autoScrollOnVoice) {
       voiceFactor = _state.isVoiceActive
           ? ScrollConstants.voiceSpeedBoost
           : ScrollConstants.silenceSpeedReduction;
+    } else {
+      voiceFactor = 1.0;
     }
 
-    final base = ScrollConstants.pixelsPerSecondBase *
+    final target = ScrollConstants.pixelsPerSecondBase *
         bpmFactor *
         voiceFactor *
         _state.manualMultiplier;
 
-    _smoothedScrollSpeed = _smoothedScrollSpeed +
-        (base - _smoothedScrollSpeed) * ScrollConstants.speedSmoothingFactor;
-
-    return _smoothedScrollSpeed;
-  }
-
-  // Smooth tick called every frame by the ScrollEngine
-  double tickScrollSpeed(double dt) {
-    if (_state.playState != PlayState.playing) return 0.0;
-    final target = _state.targetScrollSpeed;
-    _smoothedScrollSpeed = _smoothedScrollSpeed +
+    _smoothedScrollSpeed +=
         (target - _smoothedScrollSpeed) * ScrollConstants.speedSmoothingFactor;
+
     _updateState(_state.copyWith(scrollSpeed: _smoothedScrollSpeed));
     return _smoothedScrollSpeed * dt;
   }
@@ -153,27 +138,24 @@ class SyncEngine extends ChangeNotifier {
   Future<void> play() async {
     if (_state.playState == PlayState.playing) return;
     _updateState(_state.copyWith(playState: PlayState.playing));
-    _recomputeSpeed();
     await _audioEngine.start();
   }
 
   Future<void> pause() async {
     if (_state.playState != PlayState.playing) return;
+    _smoothedScrollSpeed = 0.0;
     _updateState(_state.copyWith(
       playState: PlayState.paused,
       scrollSpeed: 0.0,
-      targetScrollSpeed: 0.0,
     ));
-    _smoothedScrollSpeed = 0.0;
   }
 
   Future<void> stop() async {
+    _smoothedScrollSpeed = 0.0;
     _updateState(_state.copyWith(
       playState: PlayState.stopped,
       scrollSpeed: 0.0,
-      targetScrollSpeed: 0.0,
     ));
-    _smoothedScrollSpeed = 0.0;
     await _audioEngine.stop();
   }
 
@@ -186,12 +168,12 @@ class SyncEngine extends ChangeNotifier {
   }
 
   void setManualMultiplier(double value) {
-    final clamped = value.clamp(
-      ScrollConstants.minSpeedMultiplier,
-      ScrollConstants.maxSpeedMultiplier,
-    );
-    _updateState(_state.copyWith(manualMultiplier: clamped));
-    _recomputeSpeed();
+    _updateState(_state.copyWith(
+      manualMultiplier: value.clamp(
+        ScrollConstants.minSpeedMultiplier,
+        ScrollConstants.maxSpeedMultiplier,
+      ),
+    ));
   }
 
   void adjustSpeed(double delta) {
@@ -200,20 +182,15 @@ class SyncEngine extends ChangeNotifier {
 
   void setManualBpm(double bpm) {
     _manualBpm = bpm.clamp(AudioConstants.minBpm, AudioConstants.maxBpm);
-    _recomputeSpeed();
   }
 
   void setUseManualBpm(bool value) {
     _useManualBpm = value;
-    if (value) {
-      _updateState(_state.copyWith(bpm: _manualBpm));
-    }
-    _recomputeSpeed();
+    if (value) _updateState(_state.copyWith(bpm: _manualBpm));
   }
 
   void setAutoScrollOnVoice(bool value) {
     _autoScrollOnVoice = value;
-    _recomputeSpeed();
   }
 
   void updateVoiceSensitivity(double threshold) {

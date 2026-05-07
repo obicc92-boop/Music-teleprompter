@@ -5,6 +5,7 @@ import 'engine/audio_engine.dart';
 import 'engine/sync_engine.dart';
 import 'engine/voice_profiler.dart';
 import 'models/script.dart';
+import 'models/setlist_models.dart';
 import 'services/file_service.dart';
 import 'services/script_parser.dart';
 import 'services/settings_service.dart';
@@ -78,6 +79,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     final settings = await SettingsService().load();
     setState(() => _settings = settings);
     _syncEngine.updateVoiceSensitivity(settings.voiceSensitivity);
+    _syncEngine.setManualMultiplier(settings.scrollSpeedMultiplier);
     _syncEngine.setUseManualBpm(settings.useManualBpm);
     if (settings.useManualBpm) {
       _syncEngine.setManualBpm(settings.manualBpmOverride);
@@ -109,6 +111,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     List<SetlistEntry> setlist,
     int index,
   ) {
+    // Apply song-specific speed, or fall back to global default
+    final songSpeed = setlist.isNotEmpty ? setlist[index].speedMultiplier : null;
+    _syncEngine.setManualMultiplier(
+        songSpeed ?? _settings.scrollSpeedMultiplier);
     setState(() {
       _activeScript = script;
       _setlist = setlist;
@@ -147,6 +153,8 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     final content = await _fileService.readSavedScript(next.path);
     if (content == null || !mounted) return;
     final script = ScriptParser.parse(content, title: next.title);
+    _syncEngine.setManualMultiplier(
+        next.speedMultiplier ?? _settings.scrollSpeedMultiplier);
     setState(() {
       _activeScript = script;
       _setlistIndex++;
@@ -159,6 +167,8 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     final content = await _fileService.readSavedScript(prev.path);
     if (content == null || !mounted) return;
     final script = ScriptParser.parse(content, title: prev.title);
+    _syncEngine.setManualMultiplier(
+        prev.speedMultiplier ?? _settings.scrollSpeedMultiplier);
     setState(() {
       _activeScript = script;
       _setlistIndex--;

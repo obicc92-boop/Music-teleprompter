@@ -12,6 +12,7 @@ class ScriptLineWidget extends StatelessWidget {
   final bool karaokeEnabled;
   final int highlightedWordIndex;
   final bool isLoopBoundary;
+  final String? displayFont;
 
   const ScriptLineWidget({
     super.key,
@@ -21,6 +22,7 @@ class ScriptLineWidget extends StatelessWidget {
     this.karaokeEnabled = false,
     this.highlightedWordIndex = -1,
     this.isLoopBoundary = false,
+    this.displayFont,
   });
 
   @override
@@ -31,6 +33,7 @@ class ScriptLineWidget extends StatelessWidget {
         fontSize: fontSize,
         barCount: line.barCount,
         isActive: proximity == LineProximity.active,
+        displayFont: displayFont,
       );
     }
 
@@ -96,9 +99,9 @@ class ScriptLineWidget extends StatelessWidget {
 
           TextStyle style;
           if (isPast) {
-            style = AppTextStyles.karaokePast(fontSize);
+            style = AppTextStyles.karaokePast(fontSize, displayFont: displayFont);
           } else if (isCurrent) {
-            style = AppTextStyles.activeLine(fontSize).copyWith(
+            style = AppTextStyles.activeLine(fontSize, displayFont: displayFont).copyWith(
               color: AppColors.highlightKaraoke,
               shadows: [
                 Shadow(
@@ -108,7 +111,7 @@ class ScriptLineWidget extends StatelessWidget {
               ],
             );
           } else {
-            style = AppTextStyles.activeLine(fontSize);
+            style = AppTextStyles.activeLine(fontSize, displayFont: displayFont);
           }
 
           return TextSpan(
@@ -123,7 +126,7 @@ class ScriptLineWidget extends StatelessWidget {
   TextStyle _textStyleForProximity() {
     switch (proximity) {
       case LineProximity.active:
-        return AppTextStyles.activeLine(fontSize).copyWith(
+        return AppTextStyles.activeLine(fontSize, displayFont: displayFont).copyWith(
           shadows: [
             Shadow(
               color: AppColors.activeLine.withValues(alpha: 0.15),
@@ -132,11 +135,11 @@ class ScriptLineWidget extends StatelessWidget {
           ],
         );
       case LineProximity.near:
-        return AppTextStyles.inactiveLine(fontSize * 0.92);
+        return AppTextStyles.inactiveLine(fontSize * 0.92, displayFont: displayFont);
       case LineProximity.mid:
-        return AppTextStyles.inactiveLine(fontSize * 0.78);
+        return AppTextStyles.inactiveLine(fontSize * 0.78, displayFont: displayFont);
       case LineProximity.far:
-        return AppTextStyles.dimmedLine(fontSize * 0.65);
+        return AppTextStyles.dimmedLine(fontSize * 0.65, displayFont: displayFont);
     }
   }
 }

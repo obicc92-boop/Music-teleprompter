@@ -6,7 +6,6 @@ import '../models/script.dart';
 import '../utils/constants.dart';
 import '../utils/keyboard_handler.dart';
 import '../widgets/controls_overlay.dart';
-import '../widgets/mirror_transform.dart';
 import '../widgets/script_line_widget.dart';
 import '../services/settings_service.dart';
 
@@ -41,21 +40,38 @@ class _TeleprompterViewState extends State<TeleprompterView>
   late final ScrollEngine _scrollEngine;
   late AppSettings _settings;
   bool _isFullscreen = false;
-  bool _isMirrorMode = false;
 
   @override
   void initState() {
     super.initState();
     _settings = widget.settings;
-    _isMirrorMode = widget.settings.mirrorMode;
-
     _scrollEngine = ScrollEngine(syncEngine: widget.syncEngine);
     _scrollEngine.attach(this);
     _scrollEngine.setScript(widget.script, _effectiveLineHeight);
+    _syncEndReachedCallback();
     _scrollEngine.start();
   }
 
   double get _effectiveLineHeight => _settings.fontSize * 2.0;
+
+  @override
+  void didUpdateWidget(TeleprompterView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.settings != oldWidget.settings) {
+      setState(() => _settings = widget.settings);
+      _syncEndReachedCallback();
+    }
+  }
+
+  void _syncEndReachedCallback() {
+    _scrollEngine.onEndReached = (_settings.autoAdvance && widget.onNextScript != null)
+        ? () {
+            Future.delayed(const Duration(seconds: 3), () {
+              if (mounted) widget.onNextScript!();
+            });
+          }
+        : null;
+  }
 
   @override
   void dispose() {
@@ -67,10 +83,6 @@ class _TeleprompterViewState extends State<TeleprompterView>
     final next = !_isFullscreen;
     setState(() => _isFullscreen = next);
     await windowManager.setFullScreen(next);
-  }
-
-  void _toggleMirror() {
-    setState(() => _isMirrorMode = !_isMirrorMode);
   }
 
   void _handleBack() {
@@ -89,30 +101,27 @@ class _TeleprompterViewState extends State<TeleprompterView>
       syncEngine: widget.syncEngine,
       scrollEngine: _scrollEngine,
       onToggleFullscreen: _toggleFullscreen,
-      onToggleMirror: _toggleMirror,
       onBack: _handleBack,
+      onNextScript: widget.onNextScript,
+      onPrevScript: widget.onPrevScript,
+      pedalAction: _settings.pedalAction,
       child: Scaffold(
         backgroundColor: AppColors.background,
-        body: MirrorTransform(
-          enabled: _isMirrorMode,
-          child: Stack(
-            children: [
-              _buildCanvas(),
-              ControlsOverlay(
-                syncEngine: widget.syncEngine,
-                scrollEngine: _scrollEngine,
-                onFullscreen: _toggleFullscreen,
-                onMirrorToggle: _toggleMirror,
-                onSettings: _openSettings,
-                onBack: _handleBack,
-                onNextScript: widget.onNextScript,
-                onPrevScript: widget.onPrevScript,
-                setlistPosition: widget.setlistPosition,
-                isMirrorMode: _isMirrorMode,
-                isFullscreen: _isFullscreen,
-              ),
-            ],
-          ),
+        body: Stack(
+          children: [
+            _buildCanvas(),
+            ControlsOverlay(
+              syncEngine: widget.syncEngine,
+              scrollEngine: _scrollEngine,
+              onFullscreen: _toggleFullscreen,
+              onSettings: _openSettings,
+              onBack: _handleBack,
+              onNextScript: widget.onNextScript,
+              onPrevScript: widget.onPrevScript,
+              setlistPosition: widget.setlistPosition,
+              isFullscreen: _isFullscreen,
+            ),
+          ],
         ),
       ),
     );
@@ -159,17 +168,20 @@ class _TeleprompterViewState extends State<TeleprompterView>
 
                 return Positioned(
                   key: ValueKey(i),
-                  left: 0,
-                  right: 0,
+                  left: 48,
+                  right: 48,
                   top: y,
                   height: lineHeight,
-                  child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.center,
                     child: ScriptLineWidget(
                       line: lines[i],
                       proximity: proximity,
                       fontSize: _settings.fontSize,
                       karaokeEnabled: _settings.karaokeMode,
                       isLoopBoundary: isLoopBoundary,
+                      displayFont: _settings.displayFont,
                     ),
                   ),
                 );

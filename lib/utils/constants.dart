@@ -23,8 +23,8 @@ class AppColors {
 class AppTextStyles {
   static const String fontFamily = 'TeleprompterMono';
 
-  static TextStyle activeLine(double fontSize) => TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle activeLine(double fontSize, {String? displayFont}) => TextStyle(
+    fontFamily: displayFont ?? fontFamily,
     fontSize: fontSize,
     color: AppColors.activeLine,
     fontWeight: FontWeight.w700,
@@ -32,37 +32,75 @@ class AppTextStyles {
     letterSpacing: 0.5,
   );
 
-  static TextStyle inactiveLine(double fontSize) => TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle inactiveLine(double fontSize, {String? displayFont}) => TextStyle(
+    fontFamily: displayFont ?? fontFamily,
     fontSize: fontSize,
     color: AppColors.inactiveLine,
     fontWeight: FontWeight.w400,
     height: 1.4,
   );
 
-  static TextStyle dimmedLine(double fontSize) => TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle dimmedLine(double fontSize, {String? displayFont}) => TextStyle(
+    fontFamily: displayFont ?? fontFamily,
     fontSize: fontSize,
     color: AppColors.dimmedLine,
     fontWeight: FontWeight.w400,
     height: 1.4,
   );
 
-  static TextStyle sectionHeader(double fontSize) => TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle sectionHeader(double fontSize, {String? displayFont}) => TextStyle(
+    fontFamily: displayFont ?? fontFamily,
     fontSize: fontSize * 0.6,
     color: AppColors.sectionHeader,
     fontWeight: FontWeight.w400,
     letterSpacing: 2.0,
   );
 
-  static TextStyle karaokePast(double fontSize) => TextStyle(
-    fontFamily: fontFamily,
+  static TextStyle karaokePast(double fontSize, {String? displayFont}) => TextStyle(
+    fontFamily: displayFont ?? fontFamily,
     fontSize: fontSize,
     color: AppColors.highlightKaraoke,
     fontWeight: FontWeight.w700,
     height: 1.4,
   );
+}
+
+class DisplayFont {
+  final String label;
+  final String family;
+  final String tagline;
+
+  const DisplayFont({
+    required this.label,
+    required this.family,
+    required this.tagline,
+  });
+
+  static const List<DisplayFont> options = [
+    DisplayFont(
+      label: 'Mono',
+      family: 'TeleprompterMono',
+      tagline: 'Precise',
+    ),
+    DisplayFont(
+      label: 'Inter',
+      family: 'TeleprompterInter',
+      tagline: 'Clean',
+    ),
+    DisplayFont(
+      label: 'Oswald',
+      family: 'TeleprompterOswald',
+      tagline: 'Bold',
+    ),
+    DisplayFont(
+      label: 'Serif',
+      family: 'TeleprompterSerif',
+      tagline: 'Warm',
+    ),
+  ];
+
+  static DisplayFont fromFamily(String family) =>
+      options.firstWhere((f) => f.family == family, orElse: () => options.first);
 }
 
 class AppDimensions {
@@ -94,8 +132,9 @@ class ScrollConstants {
   static const double minSpeedMultiplier = 0.1;
   static const double maxSpeedMultiplier = 5.0;
   static const double defaultSpeedMultiplier = 1.0;
-  static const double voiceSpeedBoost = 1.15;
-  static const double silenceSpeedReduction = 0.3;
-  static const double speedSmoothingFactor = 0.08;
-  static const double pixelsPerSecondBase = 80.0;
+  // Voice active = full speed; silence = nearly stopped (5%)
+  static const double voiceSpeedBoost = 1.0;
+  static const double silenceSpeedReduction = 0.05;
+  static const double speedSmoothingFactor = 0.15;
+  static const double pixelsPerSecondBase = 100.0;
 }

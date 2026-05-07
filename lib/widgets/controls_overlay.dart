@@ -9,13 +9,11 @@ class ControlsOverlay extends StatefulWidget {
   final SyncEngine syncEngine;
   final ScrollEngine scrollEngine;
   final VoidCallback onFullscreen;
-  final VoidCallback onMirrorToggle;
   final VoidCallback onSettings;
   final VoidCallback onBack;
   final VoidCallback? onNextScript;
   final VoidCallback? onPrevScript;
   final String? setlistPosition;
-  final bool isMirrorMode;
   final bool isFullscreen;
 
   const ControlsOverlay({
@@ -23,13 +21,11 @@ class ControlsOverlay extends StatefulWidget {
     required this.syncEngine,
     required this.scrollEngine,
     required this.onFullscreen,
-    required this.onMirrorToggle,
     required this.onSettings,
     required this.onBack,
     this.onNextScript,
     this.onPrevScript,
     this.setlistPosition,
-    required this.isMirrorMode,
     required this.isFullscreen,
   });
 
@@ -93,6 +89,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         behavior: HitTestBehavior.translucent,
         child: Stack(
           children: [
+            // Auto-hiding bottom controls bar
             Positioned(
               left: 0,
               right: 0,
@@ -102,7 +99,142 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                 child: _buildBar(),
               ),
             ),
+            // Always-visible NEXT SONG button (right side)
+            if (widget.onNextScript != null)
+              Positioned(
+                right: 24,
+                bottom: AppDimensions.controlsHeight + 28,
+                child: _nextSongButton(),
+              ),
+            // Always-visible PREV SONG button (left side)
+            if (widget.onPrevScript != null)
+              Positioned(
+                left: 24,
+                bottom: AppDimensions.controlsHeight + 28,
+                child: _prevSongButton(),
+              ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _nextSongButton() {
+    return Tooltip(
+      message: 'Next song  [N]',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onNextScript,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 18),
+            decoration: BoxDecoration(
+              color: AppColors.accent,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.accent.withValues(alpha: 0.5),
+                  blurRadius: 24,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'NEXT SONG',
+                      style: TextStyle(
+                        fontFamily: AppTextStyles.fontFamily,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    Text(
+                      'press  N',
+                      style: TextStyle(
+                        fontFamily: AppTextStyles.fontFamily,
+                        fontSize: 10,
+                        color: Colors.black54,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(width: 14),
+                Icon(Icons.skip_next_rounded, size: 36, color: Colors.black),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _prevSongButton() {
+    return Tooltip(
+      message: 'Previous song  [P]',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onPrevScript,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppColors.sectionHeader.withValues(alpha: 0.3),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 12,
+                ),
+              ],
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.skip_previous_rounded,
+                    size: 26, color: AppColors.sectionHeader),
+                SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'PREV SONG',
+                      style: TextStyle(
+                        fontFamily: AppTextStyles.fontFamily,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.sectionHeader,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                    Text(
+                      'press  P',
+                      style: TextStyle(
+                        fontFamily: AppTextStyles.fontFamily,
+                        fontSize: 9,
+                        color: AppColors.dimmedLine,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -127,35 +259,15 @@ class _ControlsOverlayState extends State<ControlsOverlay>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               _backButton(),
-              if (widget.onPrevScript != null) ...[
-                const SizedBox(width: 6),
-                _iconButton(
-                  icon: Icons.skip_previous_rounded,
-                  size: 20,
-                  color: AppColors.sectionHeader,
-                  onTap: widget.onPrevScript!,
-                  tooltip: 'Previous song',
-                ),
-              ],
               if (widget.setlistPosition != null) ...[
-                const SizedBox(width: 6),
+                const SizedBox(width: 10),
                 Text(
                   widget.setlistPosition!,
                   style: const TextStyle(
                     fontFamily: AppTextStyles.fontFamily,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: AppColors.sectionHeader,
                   ),
-                ),
-              ],
-              if (widget.onNextScript != null) ...[
-                const SizedBox(width: 6),
-                _iconButton(
-                  icon: Icons.skip_next_rounded,
-                  size: 20,
-                  color: AppColors.accent,
-                  onTap: widget.onNextScript!,
-                  tooltip: 'Next song',
                 ),
               ],
               const SizedBox(width: 16),
@@ -171,8 +283,6 @@ class _ControlsOverlayState extends State<ControlsOverlay>
               ),
               const Spacer(),
               _loopButton(),
-              const SizedBox(width: 12),
-              _mirrorButton(),
               const SizedBox(width: 12),
               _settingsButton(),
               const SizedBox(width: 12),
@@ -269,15 +379,6 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           tooltip: 'Loop section (L)',
         );
       },
-    );
-  }
-
-  Widget _mirrorButton() {
-    return _iconButton(
-      icon: Icons.flip_rounded,
-      color: widget.isMirrorMode ? AppColors.accent : AppColors.sectionHeader,
-      onTap: widget.onMirrorToggle,
-      tooltip: 'Mirror mode (M)',
     );
   }
 

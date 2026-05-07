@@ -17,6 +17,10 @@ class ScrollEngine extends ChangeNotifier {
   int _loopStartLine = 0;
   int _loopEndLine = 0;
 
+  // End-of-song callback — fired once when the scroll reaches the last line
+  VoidCallback? onEndReached;
+  bool _endFired = false;
+
   Ticker? _ticker;
   Duration _lastTickTime = Duration.zero;
 
@@ -50,6 +54,7 @@ class ScrollEngine extends ChangeNotifier {
     _lineHeight = lineHeight;
     _pixelOffset = 0.0;
     _activeLineIndex = 0;
+    _endFired = false;
     notifyListeners();
   }
 
@@ -79,6 +84,11 @@ class ScrollEngine extends ChangeNotifier {
 
     _pixelOffset = (_pixelOffset + deltaPixels).clamp(0.0, maxOffset);
     _activeLineIndex = (_pixelOffset / _lineHeight).round().clamp(0, script.totalLines - 1);
+
+    if (!_endFired && _pixelOffset >= maxOffset && maxOffset > 0) {
+      _endFired = true;
+      onEndReached?.call();
+    }
 
     if (_loopEnabled) {
       final loopEndOffset = _loopEndLine * _lineHeight;
@@ -128,6 +138,7 @@ class ScrollEngine extends ChangeNotifier {
   void resetToStart() {
     _pixelOffset = 0.0;
     _activeLineIndex = 0;
+    _endFired = false;
     notifyListeners();
   }
 
