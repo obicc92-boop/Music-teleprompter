@@ -130,11 +130,11 @@ class AudioConstants {
 
 class ScrollConstants {
   static const double minSpeedMultiplier = 0.1;
-  static const double maxSpeedMultiplier = 5.0;
+  static const double maxSpeedMultiplier = 10.0;
   static const double defaultSpeedMultiplier = 1.0;
   // Voice active = full speed; silence = nearly stopped (5%)
   static const double voiceSpeedBoost = 1.0;
   static const double silenceSpeedReduction = 0.05;
   static const double speedSmoothingFactor = 0.15;
-  static const double pixelsPerSecondBase = 100.0;
+  static const double pixelsPerSecondBase = 160.0;
 }
