@@ -20,6 +20,7 @@ class VoiceDetectionLayer {
 
   double _smoothedEnergy = 0.0;
   bool _isVoiceActive = false;
+  bool _prevRawVoice = false;
   double _silenceStartTime = 0.0;
   double _voiceStartTime = 0.0;
   double _audioTime = 0.0;
@@ -43,11 +44,14 @@ class VoiceDetectionLayer {
 
     final rawVoice = _smoothedEnergy > sensitivityThreshold;
 
-    if (rawVoice && !_isVoiceActive) {
+    // Record transition times only on rising/falling edges, not every frame.
+    // Without this, _voiceStartTime resets every chunk and duration never grows.
+    if (rawVoice && !_prevRawVoice) {
       _voiceStartTime = _audioTime;
-    } else if (!rawVoice && _isVoiceActive) {
+    } else if (!rawVoice && _prevRawVoice) {
       _silenceStartTime = _audioTime;
     }
+    _prevRawVoice = rawVoice;
 
     final voiceDuration = (_audioTime - _voiceStartTime) * 1000;
     final silenceDuration = (_audioTime - _silenceStartTime) * 1000;
@@ -79,6 +83,7 @@ class VoiceDetectionLayer {
   void reset() {
     _smoothedEnergy = 0.0;
     _isVoiceActive = false;
+    _prevRawVoice = false;
     _silenceStartTime = 0.0;
     _voiceStartTime = 0.0;
     _audioTime = 0.0;
