@@ -53,13 +53,13 @@ class FileService {
     return scriptsDir;
   }
 
-  Future<bool> saveToLibrary(String content, String title) async {
+  Future<String> saveToLibrary(String content, String title) async {
     final dir = await getScriptsDirectory();
     final safe = title.replaceAll(RegExp(r'[^\w\s\-]'), '').trim();
     final name = safe.isEmpty ? 'untitled' : safe;
     final file = File('${dir.path}/$name.txt');
     await file.writeAsString(content);
-    return true;
+    return file.path;
   }
 
   Future<void> saveSetlistMeta({

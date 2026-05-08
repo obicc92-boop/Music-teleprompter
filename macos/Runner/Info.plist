@@ -30,5 +30,7 @@
 	<string>NSApplication</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Music Teleprompter uses your microphone to detect beat and vocal presence for automatic lyric scroll sync.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Music Teleprompter uses speech recognition to match sung words to lyrics for word-by-word scroll sync.</string>
 </dict>
 </plist>

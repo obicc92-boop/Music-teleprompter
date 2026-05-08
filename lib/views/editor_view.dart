@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/script.dart';
+import '../models/setlist_models.dart';
 import '../services/script_parser.dart';
 import '../services/file_service.dart';
+import '../services/setlist_service.dart';
 import '../utils/constants.dart';
 
 class EditorView extends StatefulWidget {
@@ -112,16 +114,57 @@ class _EditorViewState extends State<EditorView> {
   }
 
   Future<void> _saveToLibrary() async {
-    await _fileService.saveToLibrary(_textController.text, _currentTitle);
-    if (mounted) {
+    final path = await _fileService.saveToLibrary(_textController.text, _currentTitle);
+    if (!mounted) return;
+
+    final setlists = await SetlistService().load();
+    if (!mounted) return;
+
+    if (setlists.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Saved to setlist.'),
+          content: Text('Saved to library. Create a setlist on the home screen to add it.'),
           backgroundColor: AppColors.surface,
-          duration: Duration(seconds: 2),
+          duration: Duration(seconds: 3),
         ),
       );
+      return;
     }
+
+    // Pick which setlist to add to (skip dialog if only one exists)
+    Setlist target;
+    if (setlists.length == 1) {
+      target = setlists.first;
+    } else {
+      final picked = await showDialog<Setlist>(
+        context: context,
+        builder: (_) => _SetlistPickerDialog(setlists: setlists),
+      );
+      if (picked == null || !mounted) return;
+      target = picked;
+    }
+
+    // Skip if already in the setlist (same path)
+    final alreadyIn = target.items.any((i) => i.isSong && i.path == path);
+    if (!alreadyIn) {
+      final item = SetlistItem.song(path: path, title: _currentTitle);
+      final updated = target.copyWith(items: [...target.items, item]);
+      final newSetlists = setlists.map((s) => s.id == updated.id ? updated : s).toList();
+      await SetlistService().save(newSetlists);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          alreadyIn
+              ? '"$_currentTitle" is already in ${target.name}.'
+              : 'Added "$_currentTitle" to ${target.name}.',
+        ),
+        backgroundColor: AppColors.surface,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _launch() {
@@ -184,21 +227,65 @@ class _EditorViewState extends State<EditorView> {
           ),
           const SizedBox(width: 16),
           Expanded(
-            child: TextField(
-              controller: _titleController,
-              focusNode: _titleFocus,
-              decoration: const InputDecoration(
-                hintText: 'Song title...',
-                hintStyle: TextStyle(color: AppColors.inactiveLine),
-                border: InputBorder.none,
-                isDense: true,
+            child: Tooltip(
+              message: 'Song title — shown in the setlist and teleprompter',
+              child: Container(
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceElevated,
+                  borderRadius: BorderRadius.circular(7),
+                  border: Border.all(
+                    color: _titleFocus.hasFocus
+                        ? AppColors.accent.withValues(alpha: 0.6)
+                        : AppColors.surfaceElevated,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: const BoxDecoration(
+                        border: Border(
+                          right: BorderSide(color: AppColors.background, width: 1),
+                        ),
+                      ),
+                      child: const Text(
+                        'TITLE',
+                        style: TextStyle(
+                          fontFamily: AppTextStyles.fontFamily,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.sectionHeader,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _titleController,
+                        focusNode: _titleFocus,
+                        decoration: const InputDecoration(
+                          hintText: 'Enter song title...',
+                          hintStyle: TextStyle(
+                            fontFamily: AppTextStyles.fontFamily,
+                            color: AppColors.dimmedLine,
+                            fontSize: 13,
+                          ),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                        ),
+                        style: const TextStyle(
+                          fontFamily: AppTextStyles.fontFamily,
+                          fontSize: 13,
+                          color: AppColors.activeLine,
+                        ),
+                        onChanged: (v) => setState(() => _currentTitle = v),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              style: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 14,
-                color: AppColors.activeLine,
-              ),
-              onChanged: (v) => setState(() => _currentTitle = v),
             ),
           ),
           const SizedBox(width: 16),
@@ -378,6 +465,59 @@ class _EditorViewState extends State<EditorView> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
+    );
+  }
+}
+
+class _SetlistPickerDialog extends StatelessWidget {
+  final List<Setlist> setlists;
+  const _SetlistPickerDialog({required this.setlists});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.surface,
+      title: const Text(
+        'Add to Setlist',
+        style: TextStyle(
+          fontFamily: AppTextStyles.fontFamily,
+          color: AppColors.activeLine,
+          fontSize: 15,
+        ),
+      ),
+      content: SizedBox(
+        width: 280,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: setlists.map((s) => ListTile(
+            dense: true,
+            title: Text(
+              s.name,
+              style: const TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                color: AppColors.activeLine,
+                fontSize: 13,
+              ),
+            ),
+            trailing: Text(
+              '${s.items.where((i) => i.isSong).length} songs',
+              style: const TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                color: AppColors.sectionHeader,
+                fontSize: 11,
+              ),
+            ),
+            onTap: () => Navigator.pop(context, s),
+          )).toList(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel',
+              style: TextStyle(color: AppColors.sectionHeader)),
+        ),
+      ],
     );
   }
 }

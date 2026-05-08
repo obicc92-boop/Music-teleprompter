@@ -70,11 +70,13 @@ Let the music take control tonight
 class HomeView extends StatefulWidget {
   final void Function(Script) onOpenScript;
   final void Function(Script, List<SetlistEntry>, int) onLaunchScript;
+  final void Function(Script, List<SetlistEntry>, int) onOpenScriptWithSetlist;
 
   const HomeView({
     super.key,
     required this.onOpenScript,
     required this.onLaunchScript,
+    required this.onOpenScriptWithSetlist,
   });
 
   @override
@@ -330,8 +332,14 @@ class _HomeViewState extends State<HomeView> {
 
   Future<void> _editItem(SetlistItem item) async {
     final content = await _fileService.readSavedScript(item.path);
-    if (content == null || !mounted) return;
-    widget.onOpenScript(ScriptParser.parse(content, title: item.title));
+    if (content == null || !mounted || _active == null) return;
+    final script = ScriptParser.parse(content, title: item.title);
+    final songs = _active!.items.where((i) => i.isSong).toList();
+    final entries = songs
+        .map((i) => (path: i.path, title: i.title, speedMultiplier: i.speedMultiplier))
+        .toList();
+    final index = songs.indexWhere((i) => i.id == item.id);
+    widget.onOpenScriptWithSetlist(script, entries, index.clamp(0, entries.length - 1));
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────

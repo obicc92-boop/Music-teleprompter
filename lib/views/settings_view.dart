@@ -1,8 +1,11 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:record/record.dart' show InputDevice;
 import '../engine/sync_engine.dart';
 import '../engine/voice_profiler.dart';
 import '../services/settings_service.dart';
 import '../services/voice_profile_service.dart';
+import '../services/word_recognition_service.dart';
 import '../utils/constants.dart';
 import '../widgets/enrollment_dialog.dart';
 
@@ -34,12 +37,21 @@ class SettingsView extends StatefulWidget {
 class _SettingsViewState extends State<SettingsView> {
   late AppSettings _settings;
   late final SettingsService _service;
+  List<InputDevice> _audioDevices = [];
+  bool _loadingDevices = false;
 
   @override
   void initState() {
     super.initState();
     _settings = widget.settings;
     _service = SettingsService();
+    _refreshDevices();
+  }
+
+  Future<void> _refreshDevices() async {
+    setState(() => _loadingDevices = true);
+    final devices = await widget.syncEngine.listInputDevices();
+    if (mounted) setState(() { _audioDevices = devices; _loadingDevices = false; });
   }
 
   void _update(AppSettings updated) {
@@ -53,6 +65,7 @@ class _SettingsViewState extends State<SettingsView> {
     }
     widget.syncEngine.setUseManualBpm(updated.useManualBpm);
     widget.syncEngine.setAutoScrollOnVoice(updated.autoScrollOnVoice);
+    widget.syncEngine.setVoiceWordSync(updated.wordSyncMode != WordSyncMode.off);
   }
 
   @override
@@ -90,8 +103,16 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             const SizedBox(height: 16),
             _section('AUDIO'),
+            _audioDeviceRow(),
+            const SizedBox(height: 8),
             _voiceSensitivityRow(),
             _bpmRow(),
+            const SizedBox(height: 16),
+            _section('WORD SYNC'),
+            _wordSyncModeRow(),
+            if (_settings.wordSyncMode == WordSyncMode.whisper ||
+                _settings.wordSyncMode == WordSyncMode.whisperAlign)
+              _whisperModelRow(),
             const SizedBox(height: 16),
             _section('FEATURES'),
             _toggleRow(
@@ -255,6 +276,153 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
+  Widget _audioDeviceRow() {
+    // Current label — either a matched device name or fallback text
+    final currentLabel = _settings.audioDeviceId == null
+        ? 'System Default'
+        : _audioDevices
+                .cast<InputDevice?>()
+                .firstWhere((d) => d?.id == _settings.audioDeviceId,
+                    orElse: () => null)
+                ?.label ??
+            'Unknown device';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 130,
+            child: Text(
+              'Input Device',
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 13,
+                color: AppColors.inactiveLine,
+              ),
+            ),
+          ),
+          Expanded(
+            child: _loadingDevices
+                ? const Text(
+                    'Scanning…',
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 12,
+                      color: AppColors.sectionHeader,
+                    ),
+                  )
+                : GestureDetector(
+                    onTapDown: (details) => _showDeviceMenu(details.globalPosition),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceElevated,
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(
+                          color: _settings.audioDeviceId != null
+                              ? AppColors.accent.withValues(alpha: 0.5)
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              currentLabel,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: AppTextStyles.fontFamily,
+                                fontSize: 12,
+                                color: _settings.audioDeviceId != null
+                                    ? AppColors.activeLine
+                                    : AppColors.sectionHeader,
+                              ),
+                            ),
+                          ),
+                          const Icon(Icons.expand_more_rounded,
+                              size: 14, color: AppColors.sectionHeader),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'Refresh device list',
+            child: InkWell(
+              onTap: _refreshDevices,
+              borderRadius: BorderRadius.circular(6),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.refresh_rounded,
+                    size: 15, color: AppColors.sectionHeader),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static const _kDefaultDevice = '__default__';
+
+  Future<void> _showDeviceMenu(Offset position) async {
+    final items = <PopupMenuEntry<String>>[
+      const PopupMenuItem<String>(
+        value: _kDefaultDevice,
+        child: Text(
+          'System Default',
+          style: TextStyle(
+            fontFamily: AppTextStyles.fontFamily,
+            fontSize: 13,
+            color: AppColors.activeLine,
+          ),
+        ),
+      ),
+      if (_audioDevices.isNotEmpty) const PopupMenuDivider(),
+      ..._audioDevices.map((d) => PopupMenuItem<String>(
+            value: d.id,
+            child: Row(
+              children: [
+                const Icon(Icons.mic_rounded, size: 14, color: AppColors.sectionHeader),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    d.label,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 13,
+                      color: AppColors.activeLine,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )),
+    ];
+
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx, position.dy, position.dx + 1, position.dy + 1,
+      ),
+      items: items,
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      constraints: const BoxConstraints(minWidth: 240),
+    );
+
+    if (!mounted || selected == null) return;
+    _applyDevice(selected == _kDefaultDevice ? null : selected);
+  }
+
+  void _applyDevice(String? deviceId) {
+    _update(_settings.copyWith(audioDeviceId: deviceId));
+    widget.syncEngine.setDevice(deviceId);
+  }
+
   Widget _voiceSensitivityRow() {
     return _sliderRow(
       label: 'Voice Sensitivity',
@@ -372,6 +540,132 @@ class _SettingsViewState extends State<SettingsView> {
         ],
       ),
     );
+  }
+
+  Widget _wordSyncModeRow() {
+    const modes = [
+      (WordSyncMode.off, 'Off', 'Auto-scroll only'),
+      (WordSyncMode.onset, 'Onset', 'Energy pulse'),
+      (WordSyncMode.systemStt, 'Apple STT', 'On-device speech'),
+      (WordSyncMode.whisper, 'Whisper', 'Local AI model'),
+      (WordSyncMode.whisperAlign, 'Align', 'Word timestamps'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: modes.map((entry) {
+              final (mode, label, sub) = entry;
+              final selected = _settings.wordSyncMode == mode;
+              return GestureDetector(
+                onTap: () => _update(_settings.copyWith(wordSyncMode: mode)),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppColors.accent.withValues(alpha: 0.15)
+                        : AppColors.surfaceElevated,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: selected ? AppColors.accent : Colors.transparent,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontFamily: AppTextStyles.fontFamily,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: selected ? AppColors.accent : AppColors.inactiveLine,
+                        ),
+                      ),
+                      Text(
+                        sub,
+                        style: TextStyle(
+                          fontFamily: AppTextStyles.fontFamily,
+                          fontSize: 9,
+                          color: selected ? AppColors.accent.withValues(alpha: 0.7) : AppColors.sectionHeader,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(bottom: 4),
+          child: Text(
+            'Onset: energy pulses  ·  Apple STT: real-time speech recognition\nWhisper: best accuracy, needs brew install whisper-cpp  ·  Align: word-level timestamps',
+            style: TextStyle(
+              fontFamily: AppTextStyles.fontFamily,
+              fontSize: 10,
+              color: AppColors.sectionHeader,
+              height: 1.6,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _whisperModelRow() {
+    final hasPath = _settings.whisperModelPath.isNotEmpty;
+    final filename = hasPath
+        ? _settings.whisperModelPath.split('/').last
+        : 'No model selected';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Icon(
+            hasPath ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
+            size: 14,
+            color: hasPath ? AppColors.accent : const Color(0xFFFFA726),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              filename,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 11,
+                color: hasPath ? AppColors.inactiveLine : const Color(0xFFFFA726),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          _smallButton(
+            label: 'Pick model',
+            color: AppColors.accent,
+            onTap: _pickWhisperModel,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickWhisperModel() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['bin'],
+      dialogTitle: 'Select Whisper GGML model (.bin)',
+    );
+    if (result != null && result.files.single.path != null) {
+      _update(_settings.copyWith(whisperModelPath: result.files.single.path!));
+    }
   }
 
   Widget _pedalActionRow() {

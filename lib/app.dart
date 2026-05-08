@@ -15,6 +15,7 @@ import 'views/editor_view.dart';
 import 'views/teleprompter_view.dart';
 import 'views/settings_view.dart';
 import 'utils/constants.dart';
+import 'services/word_recognition_service.dart';
 
 enum AppScreen { home, editor, teleprompter }
 
@@ -43,6 +44,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   bool _launchedFromHome = false;
   List<SetlistEntry> _setlist = [];
   int _setlistIndex = 0;
+
+  // Setlist context preserved when editing a song from a setlist
+  List<SetlistEntry> _editorSetlist = [];
+  int _editorSetlistIndex = 0;
 
   late final AudioEngine _audioEngine;
   late final SyncEngine _syncEngine;
@@ -85,6 +90,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
       _syncEngine.setManualBpm(settings.manualBpmOverride);
     }
     _syncEngine.setAutoScrollOnVoice(settings.autoScrollOnVoice);
+    _syncEngine.setVoiceWordSync(settings.wordSyncMode != WordSyncMode.off);
+    if (settings.audioDeviceId != null) {
+      _syncEngine.setDevice(settings.audioDeviceId);
+    }
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -92,18 +101,42 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   void _openScript(Script script) {
     setState(() {
       _activeScript = script;
+      _editorSetlist = [];
+      _editorSetlistIndex = 0;
+      _screen = AppScreen.editor;
+    });
+  }
+
+  void _openScriptWithSetlist(Script script, List<SetlistEntry> setlist, int index) {
+    setState(() {
+      _activeScript = script;
+      _editorSetlist = setlist;
+      _editorSetlistIndex = index;
       _screen = AppScreen.editor;
     });
   }
 
   void _launchTeleprompter(Script script) {
-    setState(() {
-      _activeScript = script;
-      _launchedFromHome = false;
-      _setlist = [];
-      _setlistIndex = 0;
-      _screen = AppScreen.teleprompter;
-    });
+    if (_editorSetlist.isNotEmpty) {
+      // Editor was opened from a setlist — carry that context into teleprompter
+      final songSpeed = _editorSetlist[_editorSetlistIndex].speedMultiplier;
+      _syncEngine.setManualMultiplier(songSpeed ?? _settings.scrollSpeedMultiplier);
+      setState(() {
+        _activeScript = script;
+        _setlist = _editorSetlist;
+        _setlistIndex = _editorSetlistIndex;
+        _launchedFromHome = true;
+        _screen = AppScreen.teleprompter;
+      });
+    } else {
+      setState(() {
+        _activeScript = script;
+        _launchedFromHome = false;
+        _setlist = [];
+        _setlistIndex = 0;
+        _screen = AppScreen.teleprompter;
+      });
+    }
   }
 
   void _launchScriptDirect(
@@ -124,8 +157,15 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     });
   }
 
+  int _homeEpoch = 0;
+
   void _backToHome() {
-    setState(() => _screen = AppScreen.home);
+    setState(() {
+      _screen = AppScreen.home;
+      _homeEpoch++;
+      _editorSetlist = [];
+      _editorSetlistIndex = 0;
+    });
   }
 
   void _backFromTeleprompter() {
@@ -207,8 +247,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     switch (_screen) {
       case AppScreen.home:
         return HomeView(
+          key: ValueKey(_homeEpoch),
           onOpenScript: _openScript,
           onLaunchScript: _launchScriptDirect,
+          onOpenScriptWithSetlist: _openScriptWithSetlist,
         );
       case AppScreen.editor:
         return EditorView(

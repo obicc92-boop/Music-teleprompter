@@ -34,6 +34,9 @@ dependencies:
   # FFT for beat/onset detection
   fftea: ^1.4.0
 
+  # On-device speech recognition (Apple SFSpeechRecognizer on macOS)
+  speech_to_text: ^7.0.0
+
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

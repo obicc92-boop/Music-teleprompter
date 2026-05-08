@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/script_line.dart';
+import '../models/script_formatting.dart';
 import '../utils/constants.dart';
 import 'section_header_widget.dart';
 
@@ -7,22 +8,26 @@ enum LineProximity { active, near, mid, far }
 
 class ScriptLineWidget extends StatelessWidget {
   final ScriptLine line;
+  final int lineIndex;
   final LineProximity proximity;
   final double fontSize;
   final bool karaokeEnabled;
   final int highlightedWordIndex;
   final bool isLoopBoundary;
   final String? displayFont;
+  final ScriptFormatting? formatting;
 
   const ScriptLineWidget({
     super.key,
     required this.line,
+    required this.lineIndex,
     required this.proximity,
     required this.fontSize,
     this.karaokeEnabled = false,
     this.highlightedWordIndex = -1,
     this.isLoopBoundary = false,
     this.displayFont,
+    this.formatting,
   });
 
   @override
@@ -49,6 +54,8 @@ class ScriptLineWidget extends StatelessWidget {
 
     if (karaokeEnabled && proximity == LineProximity.active && line.words.isNotEmpty) {
       content = _buildKaraokeText();
+    } else if (_hasFormatting && line.words.isNotEmpty) {
+      content = _buildFormattedText();
     } else {
       content = _buildStaticText();
     }
@@ -77,11 +84,33 @@ class ScriptLineWidget extends StatelessWidget {
     );
   }
 
+  bool get _hasFormatting =>
+      formatting != null && formatting!.hasFormatsForLine(lineIndex);
+
   Widget _buildStaticText() {
     return Text(
       line.text,
       textAlign: TextAlign.center,
       style: _textStyleForProximity(),
+    );
+  }
+
+  Widget _buildFormattedText() {
+    final baseStyle = _textStyleForProximity();
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        children: line.words.asMap().entries.map((entry) {
+          final i = entry.key;
+          final word = entry.value;
+          final fmt = formatting?.formatFor(lineIndex, i);
+          final style = _applyWordFormat(baseStyle, fmt);
+          return TextSpan(
+            text: i < line.words.length - 1 ? '$word ' : word,
+            style: style,
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -94,14 +123,19 @@ class ScriptLineWidget extends StatelessWidget {
         children: line.words.asMap().entries.map((entry) {
           final i = entry.key;
           final word = entry.value;
+          final fmt = formatting?.formatFor(lineIndex, i);
           final isPast = karaokeEnabled && i < highlightedWordIndex;
           final isCurrent = karaokeEnabled && i == highlightedWordIndex;
+          final scaledSize = fontSize * (fmt?.fontSizeScale ?? 1.0);
+          final weight = fmt?.bold == true ? FontWeight.w900 : FontWeight.w700;
 
           TextStyle style;
           if (isPast) {
-            style = AppTextStyles.karaokePast(fontSize, displayFont: displayFont);
+            style = AppTextStyles.karaokePast(scaledSize, displayFont: displayFont)
+                .copyWith(fontWeight: weight);
           } else if (isCurrent) {
-            style = AppTextStyles.activeLine(fontSize, displayFont: displayFont).copyWith(
+            style = AppTextStyles.activeLine(scaledSize, displayFont: displayFont).copyWith(
+              fontWeight: weight,
               color: AppColors.highlightKaraoke,
               shadows: [
                 Shadow(
@@ -111,7 +145,10 @@ class ScriptLineWidget extends StatelessWidget {
               ],
             );
           } else {
-            style = AppTextStyles.activeLine(fontSize, displayFont: displayFont);
+            style = AppTextStyles.activeLine(scaledSize, displayFont: displayFont).copyWith(
+              fontWeight: weight,
+              color: fmt?.colorValue != null ? Color(fmt!.colorValue!) : null,
+            );
           }
 
           return TextSpan(
@@ -120,6 +157,15 @@ class ScriptLineWidget extends StatelessWidget {
           );
         }).toList(),
       ),
+    );
+  }
+
+  TextStyle _applyWordFormat(TextStyle base, WordFormat? fmt) {
+    if (fmt == null) return base;
+    return base.copyWith(
+      color: fmt.colorValue != null ? Color(fmt.colorValue!) : base.color,
+      fontSize: (base.fontSize ?? fontSize) * fmt.fontSizeScale,
+      fontWeight: fmt.bold ? FontWeight.w900 : base.fontWeight,
     );
   }
 

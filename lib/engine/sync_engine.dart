@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:record/record.dart' show InputDevice;
 import 'audio_engine.dart';
 import 'beat_detector.dart';
 import 'voice_detection_layer.dart';
@@ -60,7 +61,11 @@ class SyncEngine extends ChangeNotifier {
   bool _useManualBpm = false;
   double _manualBpm = AudioConstants.defaultBpm;
   bool _autoScrollOnVoice = true;
+  bool _voiceWordSync = false;
   VoiceProfiler? _voiceProfiler;
+
+  final StreamController<void> _onsetController =
+      StreamController<void>.broadcast();
 
   SyncEngineState get state => _state;
   PlayState get playState => _state.playState;
@@ -70,6 +75,19 @@ class SyncEngine extends ChangeNotifier {
   bool get isPlaying => _state.playState == PlayState.playing;
 
   Stream<BeatEvent> get beatStream => _audioEngine.beatStream;
+  Stream<void> get onsetStream => _onsetController.stream;
+  Stream<Uint8List> get rawAudioStream => _audioEngine.rawAudioStream;
+
+  Future<List<InputDevice>> listInputDevices() => _audioEngine.listInputDevices();
+
+  /// Switch to a different input device. Restarts the audio stream live if playing.
+  Future<void> setDevice(String? deviceId) async {
+    await _audioEngine.setDeviceId(deviceId);
+    if (_audioEngine.isRunning) {
+      await _audioEngine.stop();
+      await _audioEngine.start();
+    }
+  }
 
   SyncEngine({required AudioEngine audioEngine}) : _audioEngine = audioEngine {
     _wireStreams();
@@ -96,6 +114,9 @@ class SyncEngine extends ChangeNotifier {
       isVoiceActive: isActive,
       voiceEnergy: voiceState.smoothedEnergy,
     ));
+    if (isActive && voiceState.hasOnset) {
+      _onsetController.add(null);
+    }
   }
 
   void setVoiceProfiler(VoiceProfiler? profiler) {
@@ -115,7 +136,10 @@ class SyncEngine extends ChangeNotifier {
     final bpmFactor = effectiveBpm / AudioConstants.defaultBpm;
 
     double voiceFactor;
-    if (_autoScrollOnVoice) {
+    if (_voiceWordSync) {
+      // Word sync drives scroll via onset events; auto-scroll stays near-zero
+      voiceFactor = 0.0;
+    } else if (_autoScrollOnVoice) {
       voiceFactor = _state.isVoiceActive
           ? ScrollConstants.voiceSpeedBoost
           : ScrollConstants.silenceSpeedReduction;
@@ -193,6 +217,10 @@ class SyncEngine extends ChangeNotifier {
     _autoScrollOnVoice = value;
   }
 
+  void setVoiceWordSync(bool value) {
+    _voiceWordSync = value;
+  }
+
   void updateVoiceSensitivity(double threshold) {
     _audioEngine.updateVoiceSensitivity(threshold);
   }
@@ -207,6 +235,7 @@ class SyncEngine extends ChangeNotifier {
     await _beatSub?.cancel();
     await _voiceSub?.cancel();
     await _audioStateSub?.cancel();
+    await _onsetController.close();
     await _audioEngine.dispose();
     super.dispose();
   }

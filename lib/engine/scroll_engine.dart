@@ -125,6 +125,17 @@ class ScrollEngine extends ChangeNotifier {
     jumpToLine(_activeLineIndex + delta);
   }
 
+  void scrollByPixels(double delta) {
+    final script = _script;
+    if (script == null) return;
+    if (delta < 0) _endFired = false; // allow re-trigger if user scrolls back
+    final maxOffset = (script.totalLines - 1) * _lineHeight;
+    _pixelOffset = (_pixelOffset + delta).clamp(0.0, maxOffset);
+    _activeLineIndex =
+        (_pixelOffset / _lineHeight).round().clamp(0, script.totalLines - 1);
+    notifyListeners();
+  }
+
   void setLoopRange(int startLine, int endLine) {
     _loopStartLine = startLine;
     _loopEndLine = endLine;

@@ -15,6 +15,7 @@ class AudioEngine {
 
   AudioEngineState _state = AudioEngineState.idle;
   StreamSubscription<Uint8List>? _audioSubscription;
+  InputDevice? _selectedDevice;
 
   final StreamController<BeatEvent> _beatController =
       StreamController<BeatEvent>.broadcast();
@@ -22,10 +23,14 @@ class AudioEngine {
       StreamController<VoiceState>.broadcast();
   final StreamController<AudioEngineState> _stateController =
       StreamController<AudioEngineState>.broadcast();
+  final StreamController<Uint8List> _rawController =
+      StreamController<Uint8List>.broadcast();
 
   Stream<BeatEvent> get beatStream => _beatController.stream;
   Stream<VoiceState> get voiceStream => _voiceController.stream;
   Stream<AudioEngineState> get stateStream => _stateController.stream;
+  /// Raw PCM-16 mono 16 kHz bytes — used by WhisperRecognition for buffering.
+  Stream<Uint8List> get rawAudioStream => _rawController.stream;
 
   VoiceProfiler? voiceProfiler;
 
@@ -56,11 +61,12 @@ class AudioEngine {
       }
 
       final stream = await _recorder.startStream(
-        const RecordConfig(
+        RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: AudioConstants.sampleRate,
           numChannels: 1,
           bitRate: 16 * AudioConstants.sampleRate,
+          device: _selectedDevice,
         ),
       );
 
@@ -102,6 +108,28 @@ class AudioEngine {
     _voiceLayer.updateSensitivity(threshold);
   }
 
+  Future<List<InputDevice>> listInputDevices() async {
+    try {
+      return await _recorder.listInputDevices();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Set the active input device by ID. Pass null to use the system default.
+  /// If the engine is running, caller is responsible for restarting.
+  Future<void> setDeviceId(String? id) async {
+    if (id == null) {
+      _selectedDevice = null;
+      return;
+    }
+    final devices = await listInputDevices();
+    _selectedDevice = devices.cast<InputDevice?>().firstWhere(
+      (d) => d?.id == id,
+      orElse: () => null,
+    );
+  }
+
   void _processAudioChunk(Uint8List bytes) {
     if (_state != AudioEngineState.running) return;
 
@@ -119,6 +147,9 @@ class AudioEngine {
     );
     if (!_voiceController.isClosed) {
       _voiceController.add(voiceState);
+    }
+    if (!_rawController.isClosed) {
+      _rawController.add(bytes);
     }
 
     voiceProfiler?.processChunk(samples);
@@ -146,6 +177,7 @@ class AudioEngine {
     await _beatController.close();
     await _voiceController.close();
     await _stateController.close();
+    await _rawController.close();
     _recorder.dispose();
   }
 }

@@ -6,12 +6,14 @@ class VoiceState {
   final double energy;
   final double smoothedEnergy;
   final double timestamp;
+  final bool hasOnset;
 
   const VoiceState({
     required this.isActive,
     required this.energy,
     required this.smoothedEnergy,
     required this.timestamp,
+    this.hasOnset = false,
   });
 }
 
@@ -31,6 +33,19 @@ class VoiceDetectionLayer {
   static const double _minVoiceDurationMs = 80.0;
   static const double _minSilenceDurationMs = 300.0;
 
+  // Onset detection state
+  // Detects the rising edge of each new syllable/word using energy flux.
+  // _onsetArmed prevents multiple firings from the same onset — must drop below
+  // arm threshold before the next onset can trigger.
+  double _onsetPrevEnergy = 0.0;
+  double _onsetFlux = 0.0;
+  bool _onsetArmed = true;
+  int _samplesSinceOnset = 0;
+
+  static const double _onsetFluxThreshold = 0.004;
+  static const double _onsetArmThreshold = 0.002;
+  static const int _minOnsetIntervalMs = 100;
+
   VoiceDetectionLayer({
     this.sensitivityThreshold = AudioConstants.voiceEnergyThreshold,
   });
@@ -45,7 +60,6 @@ class VoiceDetectionLayer {
     final rawVoice = _smoothedEnergy > sensitivityThreshold;
 
     // Record transition times only on rising/falling edges, not every frame.
-    // Without this, _voiceStartTime resets every chunk and duration never grows.
     if (rawVoice && !_prevRawVoice) {
       _voiceStartTime = _audioTime;
     } else if (!rawVoice && _prevRawVoice) {
@@ -62,12 +76,43 @@ class VoiceDetectionLayer {
       _isVoiceActive = false;
     }
 
+    final onset = _checkOnset(samples.length, sampleRate);
+
     return VoiceState(
       isActive: _isVoiceActive,
       energy: rms,
       smoothedEnergy: _smoothedEnergy,
       timestamp: _audioTime,
+      hasOnset: onset,
     );
+  }
+
+  // Returns true once per rising energy edge while voice is active.
+  // Uses a peak-picking arm/disarm cycle so a single onset fires exactly once.
+  bool _checkOnset(int sampleCount, int sampleRate) {
+    _samplesSinceOnset += sampleCount;
+
+    final rise = _smoothedEnergy - _onsetPrevEnergy;
+    _onsetPrevEnergy = _smoothedEnergy;
+
+    // Smooth only positive rises (energy increases = new sound starting)
+    _onsetFlux = _onsetFlux * 0.4 + (rise > 0 ? rise : 0.0) * 0.6;
+
+    // Re-arm once flux has decayed back down (peak has passed)
+    if (!_onsetArmed && _onsetFlux < _onsetArmThreshold) {
+      _onsetArmed = true;
+    }
+
+    final minSamples = _minOnsetIntervalMs * sampleRate ~/ 1000;
+    if (_isVoiceActive &&
+        _onsetArmed &&
+        _onsetFlux > _onsetFluxThreshold &&
+        _samplesSinceOnset >= minSamples) {
+      _samplesSinceOnset = 0;
+      _onsetArmed = false;
+      return true;
+    }
+    return false;
   }
 
   bool get isVoiceActive => _isVoiceActive;
@@ -87,6 +132,10 @@ class VoiceDetectionLayer {
     _silenceStartTime = 0.0;
     _voiceStartTime = 0.0;
     _audioTime = 0.0;
+    _onsetPrevEnergy = 0.0;
+    _onsetFlux = 0.0;
+    _onsetArmed = true;
+    _samplesSinceOnset = 0;
   }
 
   void updateSensitivity(double threshold) {

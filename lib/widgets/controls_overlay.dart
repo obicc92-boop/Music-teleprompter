@@ -10,11 +10,14 @@ class ControlsOverlay extends StatefulWidget {
   final ScrollEngine scrollEngine;
   final VoidCallback onFullscreen;
   final VoidCallback onSettings;
+  final VoidCallback onEditLyrics;
+  final VoidCallback onFormatLyrics;
   final VoidCallback onBack;
   final VoidCallback? onNextScript;
   final VoidCallback? onPrevScript;
   final String? setlistPosition;
   final bool isFullscreen;
+  final String songTitle;
 
   const ControlsOverlay({
     super.key,
@@ -22,11 +25,14 @@ class ControlsOverlay extends StatefulWidget {
     required this.scrollEngine,
     required this.onFullscreen,
     required this.onSettings,
+    required this.onEditLyrics,
+    required this.onFormatLyrics,
     required this.onBack,
     this.onNextScript,
     this.onPrevScript,
     this.setlistPosition,
     required this.isFullscreen,
+    required this.songTitle,
   });
 
   @override
@@ -274,15 +280,42 @@ class _ControlsOverlayState extends State<ControlsOverlay>
               _playPauseButton(state),
               const SizedBox(width: 20),
               _speedControl(state),
-              const Spacer(),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    widget.songTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.activeLine,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ),
               BpmIndicator(
                 beatStream: widget.syncEngine.beatStream,
                 bpm: state.bpm,
                 isVoiceActive: state.isVoiceActive,
                 voiceEnergy: state.voiceEnergy,
               ),
-              const Spacer(),
+              const SizedBox(width: 16),
               _loopButton(),
+              const SizedBox(width: 12),
+              _iconButton(
+                icon: Icons.edit_rounded,
+                onTap: widget.onEditLyrics,
+                tooltip: 'Edit lyrics',
+              ),
+              const SizedBox(width: 12),
+              _iconButton(
+                icon: Icons.format_paint_rounded,
+                onTap: widget.onFormatLyrics,
+                tooltip: 'Format lyrics',
+              ),
               const SizedBox(width: 12),
               _settingsButton(),
               const SizedBox(width: 12),
