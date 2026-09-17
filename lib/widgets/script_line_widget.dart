@@ -11,11 +11,12 @@ class ScriptLineWidget extends StatelessWidget {
   final int lineIndex;
   final LineProximity proximity;
   final double fontSize;
-  final bool karaokeEnabled;
-  final int highlightedWordIndex;
   final bool isLoopBoundary;
   final String? displayFont;
   final ScriptFormatting? formatting;
+  final int? activeWordIndex;
+  final bool textAlignLeft;
+  final bool showHighlight;
 
   const ScriptLineWidget({
     super.key,
@@ -23,11 +24,12 @@ class ScriptLineWidget extends StatelessWidget {
     required this.lineIndex,
     required this.proximity,
     required this.fontSize,
-    this.karaokeEnabled = false,
-    this.highlightedWordIndex = -1,
     this.isLoopBoundary = false,
     this.displayFont,
     this.formatting,
+    this.activeWordIndex,
+    this.textAlignLeft = false,
+    this.showHighlight = true,
   });
 
   @override
@@ -51,9 +53,10 @@ class ScriptLineWidget extends StatelessWidget {
 
   Widget _buildLyricLine() {
     Widget content;
-
-    if (karaokeEnabled && proximity == LineProximity.active && line.words.isNotEmpty) {
-      content = _buildKaraokeText();
+    if (line.hasChords) {
+      content = _buildChordLine();
+    } else if (activeWordIndex != null && line.words.isNotEmpty) {
+      content = _buildKaraokeText(activeWordIndex!);
     } else if (_hasFormatting && line.words.isNotEmpty) {
       content = _buildFormattedText();
     } else {
@@ -68,10 +71,7 @@ class ScriptLineWidget extends StatelessWidget {
             left: 0,
             top: 0,
             bottom: 0,
-            child: Container(
-              width: 3,
-              color: AppColors.loopMarker,
-            ),
+            child: Container(width: 3, color: AppColors.loopMarker),
           ),
         ],
       );
@@ -87,10 +87,42 @@ class ScriptLineWidget extends StatelessWidget {
   bool get _hasFormatting =>
       formatting != null && formatting!.hasFormatsForLine(lineIndex);
 
+  TextAlign get _textAlign =>
+      textAlignLeft ? TextAlign.left : TextAlign.center;
+
+  Widget _buildKaraokeText(int activeIdx) {
+    final base = _textStyleForProximity();
+    return RichText(
+      textAlign: _textAlign,
+      text: TextSpan(
+        children: line.words.asMap().entries.map((e) {
+          final i = e.key;
+          final word = e.value;
+          final isActive = i == activeIdx;
+          final isSung = i < activeIdx;
+          final style = base.copyWith(
+            color: isActive
+                ? AppColors.accent
+                : isSung
+                    ? base.color?.withValues(alpha: 0.35)
+                    : base.color,
+            shadows: isActive
+                ? [Shadow(color: AppColors.accent.withValues(alpha: 0.5), blurRadius: 12)]
+                : null,
+          );
+          return TextSpan(
+            text: i < line.words.length - 1 ? '$word ' : word,
+            style: style,
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildStaticText() {
     return Text(
       line.text,
-      textAlign: TextAlign.center,
+      textAlign: _textAlign,
       style: _textStyleForProximity(),
     );
   }
@@ -98,65 +130,57 @@ class ScriptLineWidget extends StatelessWidget {
   Widget _buildFormattedText() {
     final baseStyle = _textStyleForProximity();
     return RichText(
-      textAlign: TextAlign.center,
+      textAlign: _textAlign,
       text: TextSpan(
         children: line.words.asMap().entries.map((entry) {
           final i = entry.key;
           final word = entry.value;
           final fmt = formatting?.formatFor(lineIndex, i);
-          final style = _applyWordFormat(baseStyle, fmt);
           return TextSpan(
             text: i < line.words.length - 1 ? '$word ' : word,
-            style: style,
+            style: _applyWordFormat(baseStyle, fmt),
           );
         }).toList(),
       ),
     );
   }
 
-  Widget _buildKaraokeText() {
-    if (line.words.isEmpty) return _buildStaticText();
+  Widget _buildChordLine() {
+    final lyricStyle = _textStyleForProximity();
+    final chordStyle = _chordStyle();
 
-    return RichText(
-      textAlign: TextAlign.center,
-      text: TextSpan(
-        children: line.words.asMap().entries.map((entry) {
-          final i = entry.key;
-          final word = entry.value;
-          final fmt = formatting?.formatFor(lineIndex, i);
-          final isPast = karaokeEnabled && i < highlightedWordIndex;
-          final isCurrent = karaokeEnabled && i == highlightedWordIndex;
-          final scaledSize = fontSize * (fmt?.fontSizeScale ?? 1.0);
-          final weight = fmt?.bold == true ? FontWeight.w900 : FontWeight.w700;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: line.chordSegments!.map((seg) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              seg.chord ?? '',
+              style: chordStyle,
+            ),
+            Text(
+              seg.text,
+              style: lyricStyle,
+            ),
+          ],
+        );
+      }).toList(),
+    );
+  }
 
-          TextStyle style;
-          if (isPast) {
-            style = AppTextStyles.karaokePast(scaledSize, displayFont: displayFont)
-                .copyWith(fontWeight: weight);
-          } else if (isCurrent) {
-            style = AppTextStyles.activeLine(scaledSize, displayFont: displayFont).copyWith(
-              fontWeight: weight,
-              color: AppColors.highlightKaraoke,
-              shadows: [
-                Shadow(
-                  color: AppColors.highlightKaraoke.withValues(alpha: 0.6),
-                  blurRadius: 12,
-                ),
-              ],
-            );
-          } else {
-            style = AppTextStyles.activeLine(scaledSize, displayFont: displayFont).copyWith(
-              fontWeight: weight,
-              color: fmt?.colorValue != null ? Color(fmt!.colorValue!) : null,
-            );
-          }
-
-          return TextSpan(
-            text: i < line.words.length - 1 ? '$word ' : word,
-            style: style,
-          );
-        }).toList(),
-      ),
+  TextStyle _chordStyle() {
+    final isActive = proximity == LineProximity.active;
+    final chordFontSize = fontSize * 0.55;
+    return TextStyle(
+      fontFamily: displayFont ?? AppTextStyles.fontFamily,
+      fontSize: chordFontSize,
+      fontWeight: FontWeight.w700,
+      color: isActive ? AppColors.accent : AppColors.sectionHeader.withValues(alpha: 0.7),
+      letterSpacing: 0.5,
+      height: 1.1,
     );
   }
 
@@ -170,6 +194,11 @@ class ScriptLineWidget extends StatelessWidget {
   }
 
   TextStyle _textStyleForProximity() {
+    if (!showHighlight) {
+      // All lines rendered identically — no active/inactive distinction.
+      return AppTextStyles.inactiveLine(fontSize, displayFont: displayFont)
+          .copyWith(color: AppColors.activeLine.withValues(alpha: 0.75));
+    }
     switch (proximity) {
       case LineProximity.active:
         return AppTextStyles.activeLine(fontSize, displayFont: displayFont).copyWith(

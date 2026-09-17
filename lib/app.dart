@@ -1,21 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
-import 'engine/audio_engine.dart';
 import 'engine/sync_engine.dart';
-import 'engine/voice_profiler.dart';
 import 'models/script.dart';
 import 'models/setlist_models.dart';
 import 'services/file_service.dart';
 import 'services/script_parser.dart';
 import 'services/settings_service.dart';
-import 'services/voice_profile_service.dart';
 import 'views/home_view.dart';
 import 'views/editor_view.dart';
 import 'views/teleprompter_view.dart';
 import 'views/settings_view.dart';
 import 'utils/constants.dart';
-import 'services/word_recognition_service.dart';
+import 'widgets/window_title_bar.dart';
 
 enum AppScreen { home, editor, teleprompter }
 
@@ -40,60 +37,34 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   AppSettings _settings = const AppSettings();
   bool _showSettings = false;
 
-  // Setlist navigation state
   bool _launchedFromHome = false;
   List<SetlistEntry> _setlist = [];
   int _setlistIndex = 0;
 
-  // Setlist context preserved when editing a song from a setlist
   List<SetlistEntry> _editorSetlist = [];
   int _editorSetlistIndex = 0;
 
-  late final AudioEngine _audioEngine;
-  late final SyncEngine _syncEngine;
-  late final VoiceProfiler _voiceProfiler;
+  final SyncEngine _syncEngine = SyncEngine();
   final FileService _fileService = FileService();
-  final VoiceProfileService _voiceProfileService = VoiceProfileService();
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
-    _audioEngine = AudioEngine(voiceSensitivity: _settings.voiceSensitivity);
-    _syncEngine = SyncEngine(audioEngine: _audioEngine);
-    _voiceProfiler = VoiceProfiler();
-    _syncEngine.setVoiceProfiler(_voiceProfiler);
     _loadSettings();
-    _loadVoiceProfile();
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
     _syncEngine.dispose();
-    _voiceProfiler.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadVoiceProfile() async {
-    final vector = await _voiceProfileService.load();
-    if (vector != null) _voiceProfiler.loadProfile(vector);
   }
 
   Future<void> _loadSettings() async {
     final settings = await SettingsService().load();
     setState(() => _settings = settings);
-    _syncEngine.updateVoiceSensitivity(settings.voiceSensitivity);
     _syncEngine.setManualMultiplier(settings.scrollSpeedMultiplier);
-    _syncEngine.setUseManualBpm(settings.useManualBpm);
-    if (settings.useManualBpm) {
-      _syncEngine.setManualBpm(settings.manualBpmOverride);
-    }
-    _syncEngine.setAutoScrollOnVoice(settings.autoScrollOnVoice);
-    _syncEngine.setVoiceWordSync(settings.wordSyncMode != WordSyncMode.off);
-    if (settings.audioDeviceId != null) {
-      _syncEngine.setDevice(settings.audioDeviceId);
-    }
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -107,7 +78,8 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     });
   }
 
-  void _openScriptWithSetlist(Script script, List<SetlistEntry> setlist, int index) {
+  void _openScriptWithSetlist(
+      Script script, List<SetlistEntry> setlist, int index) {
     setState(() {
       _activeScript = script;
       _editorSetlist = setlist;
@@ -118,9 +90,9 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
 
   void _launchTeleprompter(Script script) {
     if (_editorSetlist.isNotEmpty) {
-      // Editor was opened from a setlist — carry that context into teleprompter
       final songSpeed = _editorSetlist[_editorSetlistIndex].speedMultiplier;
-      _syncEngine.setManualMultiplier(songSpeed ?? _settings.scrollSpeedMultiplier);
+      _syncEngine
+          .setManualMultiplier(songSpeed ?? _settings.scrollSpeedMultiplier);
       setState(() {
         _activeScript = script;
         _setlist = _editorSetlist;
@@ -140,14 +112,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   }
 
   void _launchScriptDirect(
-    Script script,
-    List<SetlistEntry> setlist,
-    int index,
-  ) {
-    // Apply song-specific speed, or fall back to global default
+      Script script, List<SetlistEntry> setlist, int index) {
     final songSpeed = setlist.isNotEmpty ? setlist[index].speedMultiplier : null;
-    _syncEngine.setManualMultiplier(
-        songSpeed ?? _settings.scrollSpeedMultiplier);
+    _syncEngine
+        .setManualMultiplier(songSpeed ?? _settings.scrollSpeedMultiplier);
     setState(() {
       _activeScript = script;
       _setlist = setlist;
@@ -171,7 +139,8 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   void _backFromTeleprompter() {
     _syncEngine.stop();
     setState(() {
-      _screen = _launchedFromHome ? AppScreen.home : AppScreen.editor;
+      _screen =
+          _launchedFromHome ? AppScreen.home : AppScreen.editor;
       if (_launchedFromHome) {
         _launchedFromHome = false;
         _setlist = [];
@@ -180,12 +149,11 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     });
   }
 
-  // ── Setlist next / prev ───────────────────────────────────────────────────
-
   bool get _hasNextScript =>
       _launchedFromHome && _setlistIndex < _setlist.length - 1;
 
-  bool get _hasPrevScript => _launchedFromHome && _setlistIndex > 0;
+  bool get _hasPrevScript =>
+      _launchedFromHome && _setlistIndex > 0;
 
   Future<void> _nextScript() async {
     if (!_hasNextScript) return;
@@ -236,7 +204,12 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
       ),
       home: Stack(
         children: [
-          _buildCurrentScreen(),
+          Column(
+            children: [
+              if (_screen != AppScreen.teleprompter) const WindowTitleBar(),
+              Expanded(child: _buildCurrentScreen()),
+            ],
+          ),
           if (_showSettings) _buildSettingsOverlay(),
         ],
       ),
@@ -260,15 +233,14 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
         );
       case AppScreen.teleprompter:
         return TeleprompterView(
-          // Key forces a fresh state when the script changes mid-setlist
           key: ValueKey(_activeScript.title + _setlistIndex.toString()),
           script: _activeScript,
           syncEngine: _syncEngine,
           settings: _settings,
           onBack: _backFromTeleprompter,
           onSettings: () => setState(() => _showSettings = true),
-          onNextScript: _hasNextScript ? () { _nextScript(); } : null,
-          onPrevScript: _hasPrevScript ? () { _prevScript(); } : null,
+          onNextScript: _hasNextScript ? _nextScript : null,
+          onPrevScript: _hasPrevScript ? _prevScript : null,
           setlistPosition: _launchedFromHome
               ? '${_setlistIndex + 1} / ${_setlist.length}'
               : null,
@@ -288,8 +260,6 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
             child: SettingsView(
               settings: _settings,
               syncEngine: _syncEngine,
-              voiceProfiler: _voiceProfiler,
-              voiceProfileService: _voiceProfileService,
               onChanged: (s) => setState(() => _settings = s),
               onClose: () => setState(() => _showSettings = false),
             ),

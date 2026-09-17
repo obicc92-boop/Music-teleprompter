@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/script.dart';
 import '../services/script_parser.dart';
@@ -6,12 +7,16 @@ import '../utils/constants.dart';
 
 class LyricsEditOverlay extends StatefulWidget {
   final Script script;
+  /// Called immediately (debounced 250 ms) as the user types — drives live preview.
+  final void Function(Script updated) onLiveChanged;
+  /// Called once on "Apply & Save" — persists to disk and closes the panel.
   final void Function(Script updated) onSaved;
   final VoidCallback onClose;
 
   const LyricsEditOverlay({
     super.key,
     required this.script,
+    required this.onLiveChanged,
     required this.onSaved,
     required this.onClose,
   });
@@ -22,35 +27,46 @@ class LyricsEditOverlay extends StatefulWidget {
 
 class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
   late final TextEditingController _controller;
+  Timer? _debounce;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.script.rawText);
+    _controller.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
+  void _onTextChanged() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      final newScript =
+          ScriptParser.parse(_controller.text, title: widget.script.title);
+      widget.onLiveChanged(newScript);
+    });
+  }
+
   Future<void> _apply() async {
     setState(() => _saving = true);
+    _debounce?.cancel();
     final newText = _controller.text;
     final newScript = ScriptParser.parse(newText, title: widget.script.title);
     await FileService().saveToLibrary(newText, widget.script.title);
-    if (mounted) {
-      widget.onSaved(newScript);
-      widget.onClose();
-    }
+    if (mounted) widget.onSaved(newScript);
   }
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.background.withValues(alpha: 0.96),
+      color: AppColors.surface,
       child: Column(
         children: [
           _buildHeader(),
@@ -63,9 +79,12 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.surfaceElevated)),
+        border: Border(
+          bottom: BorderSide(color: AppColors.surfaceElevated),
+          left: BorderSide(color: AppColors.surfaceElevated),
+        ),
       ),
       child: Row(
         children: [
@@ -73,19 +92,10 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
             'EDIT LYRICS',
             style: TextStyle(
               fontFamily: AppTextStyles.fontFamily,
-              fontSize: 13,
+              fontSize: 11,
               color: AppColors.activeLine,
               letterSpacing: 2,
               fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(width: 16),
-          const Text(
-            'Changes are saved to the library',
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: 11,
-              color: AppColors.sectionHeader,
             ),
           ),
           const Spacer(),
@@ -96,7 +106,7 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
               style: TextStyle(
                 fontFamily: AppTextStyles.fontFamily,
                 color: AppColors.sectionHeader,
-                fontSize: 14,
+                fontSize: 13,
               ),
             ),
           ),
@@ -106,8 +116,11 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
   }
 
   Widget _buildEditor() {
-    return Padding(
-      padding: const EdgeInsets.all(24),
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: AppColors.surfaceElevated)),
+      ),
+      padding: const EdgeInsets.all(16),
       child: TextField(
         controller: _controller,
         maxLines: null,
@@ -115,15 +128,16 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
         textAlignVertical: TextAlignVertical.top,
         style: const TextStyle(
           fontFamily: AppTextStyles.fontFamily,
-          fontSize: 14,
+          fontSize: 13,
           color: AppColors.activeLine,
           height: 1.7,
         ),
         decoration: InputDecoration(
-          hintText: 'Type lyrics here…\n\nUse [Verse 1], [Chorus] etc. for section headers.',
+          hintText:
+              'Type lyrics here…\n\nUse [Verse 1], [Chorus] etc. for section headers.',
           hintStyle: const TextStyle(
             fontFamily: AppTextStyles.fontFamily,
-            fontSize: 13,
+            fontSize: 12,
             color: AppColors.dimmedLine,
           ),
           filled: true,
@@ -132,7 +146,7 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
             borderRadius: BorderRadius.circular(8),
             borderSide: BorderSide.none,
           ),
-          contentPadding: const EdgeInsets.all(16),
+          contentPadding: const EdgeInsets.all(14),
         ),
       ),
     );
@@ -140,8 +154,14 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
 
   Widget _buildFooter() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-      color: AppColors.surface,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(
+          top: BorderSide(color: AppColors.surfaceElevated),
+          left: BorderSide(color: AppColors.surfaceElevated),
+        ),
+      ),
       child: SizedBox(
         width: double.infinity,
         child: ElevatedButton(
@@ -149,7 +169,7 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.accent,
             foregroundColor: Colors.black,
-            padding: const EdgeInsets.symmetric(vertical: 14),
+            padding: const EdgeInsets.symmetric(vertical: 13),
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8)),
           ),
@@ -159,7 +179,7 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
               fontFamily: AppTextStyles.fontFamily,
               fontWeight: FontWeight.w700,
               letterSpacing: 1,
-              fontSize: 13,
+              fontSize: 12,
             ),
           ),
         ),

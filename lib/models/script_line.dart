@@ -1,3 +1,10 @@
+class ChordSegment {
+  final String? chord;
+  final String text;
+
+  const ChordSegment({this.chord, required this.text});
+}
+
 class ScriptLine {
   final String text;
   final List<String> words;
@@ -8,6 +15,9 @@ class ScriptLine {
   final int? barCount;
   final bool isLoopStart;
   final bool isLoopEnd;
+  final List<ChordSegment>? chordSegments;
+  /// Per-word start times in seconds from start of audio, used for karaoke highlight.
+  final List<double>? wordTimestamps;
 
   const ScriptLine({
     required this.text,
@@ -19,6 +29,8 @@ class ScriptLine {
     this.barCount,
     this.isLoopStart = false,
     this.isLoopEnd = false,
+    this.chordSegments,
+    this.wordTimestamps,
   });
 
   ScriptLine copyWith({
@@ -31,6 +43,8 @@ class ScriptLine {
     int? barCount,
     bool? isLoopStart,
     bool? isLoopEnd,
+    List<ChordSegment>? chordSegments,
+    List<double>? wordTimestamps,
   }) {
     return ScriptLine(
       text: text ?? this.text,
@@ -42,10 +56,13 @@ class ScriptLine {
       barCount: barCount ?? this.barCount,
       isLoopStart: isLoopStart ?? this.isLoopStart,
       isLoopEnd: isLoopEnd ?? this.isLoopEnd,
+      chordSegments: chordSegments ?? this.chordSegments,
+      wordTimestamps: wordTimestamps ?? this.wordTimestamps,
     );
   }
 
   bool get isEmpty => text.trim().isEmpty && !isSectionHeader;
+  bool get hasChords => chordSegments != null && chordSegments!.isNotEmpty;
 
   @override
   String toString() => 'ScriptLine(text: "$text", isSectionHeader: $isSectionHeader)';

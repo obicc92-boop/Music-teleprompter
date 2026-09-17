@@ -85,7 +85,7 @@ class ScrollEngine extends ChangeNotifier {
     _pixelOffset = (_pixelOffset + deltaPixels).clamp(0.0, maxOffset);
     _activeLineIndex = (_pixelOffset / _lineHeight).round().clamp(0, script.totalLines - 1);
 
-    if (!_endFired && _pixelOffset >= maxOffset && maxOffset > 0) {
+    if (!_loopEnabled && !_endFired && _pixelOffset >= maxOffset && maxOffset > 0) {
       _endFired = true;
       onEndReached?.call();
     }
@@ -95,6 +95,7 @@ class ScrollEngine extends ChangeNotifier {
       if (_pixelOffset >= loopEndOffset) {
         _pixelOffset = _loopStartLine * _lineHeight;
         _activeLineIndex = _loopStartLine;
+        _endFired = false; // allow end-of-song to fire again if loop is later disabled
       }
     }
 
@@ -143,7 +144,41 @@ class ScrollEngine extends ChangeNotifier {
 
   void setLoopEnabled(bool enabled) {
     _loopEnabled = enabled;
+    if (enabled) _snapLoopToCurrentSection();
     notifyListeners();
+  }
+
+  void _snapLoopToCurrentSection() {
+    final script = _script;
+    if (script == null || script.sections.isEmpty) {
+      _loopStartLine = 0;
+      _loopEndLine = (script?.totalLines ?? 1) - 1;
+      return;
+    }
+    final sectionIdx = script.sectionIndexForLine(_activeLineIndex);
+    _loopStartLine = script.sections[sectionIdx].startLineIndex;
+    _loopEndLine = (sectionIdx + 1 < script.sections.length)
+        ? script.sections[sectionIdx + 1].startLineIndex
+        : script.totalLines - 1;
+  }
+
+  void jumpToFraction(double fraction) {
+    final script = _script;
+    if (script == null || script.isEmpty) return;
+    final maxOffset = (script.totalLines - 1) * _lineHeight;
+    _pixelOffset = (fraction.clamp(0.0, 1.0) * maxOffset);
+    _activeLineIndex = (_pixelOffset / _lineHeight).round().clamp(0, script.totalLines - 1);
+    _endFired = false;
+    notifyListeners();
+  }
+
+  /// Returns the fraction (0–1) at which [lineIndex] sits.
+  double fractionForLine(int lineIndex) {
+    final script = _script;
+    if (script == null || script.isEmpty) return 0.0;
+    final maxOffset = (script.totalLines - 1) * _lineHeight;
+    if (maxOffset <= 0) return 0.0;
+    return (lineIndex * _lineHeight / maxOffset).clamp(0.0, 1.0);
   }
 
   void resetToStart() {
@@ -153,11 +188,13 @@ class ScrollEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Returns how far (0.0–1.0) the active line is into the current word
-  double wordProgress(double bpm) {
-    if (bpm <= 0) return 0.0;
-    final beatDuration = 60.0 / bpm;
-    return (DateTime.now().millisecondsSinceEpoch / 1000.0 % beatDuration) / beatDuration;
+  /// 0.0 – 1.0 fraction of how far the scroll has progressed through the script.
+  double get progressFraction {
+    final script = _script;
+    if (script == null || script.isEmpty) return 0.0;
+    final maxOffset = (script.totalLines - 1) * _lineHeight;
+    if (maxOffset <= 0) return 0.0;
+    return (_pixelOffset / maxOffset).clamp(0.0, 1.0);
   }
 
   @override

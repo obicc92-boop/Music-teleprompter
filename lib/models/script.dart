@@ -22,6 +22,7 @@ class Script {
   );
 
   bool get isEmpty => allLines.isEmpty;
+  bool get hasChordLines => allLines.any((l) => l.hasChords);
 
   int get totalLines => allLines.length;
 

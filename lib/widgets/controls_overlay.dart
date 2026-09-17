@@ -2,22 +2,44 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
+import '../models/song_theme.dart';
+import '../services/chord_transposer.dart';
 import '../utils/constants.dart';
-import 'bpm_indicator.dart';
 
 class ControlsOverlay extends StatefulWidget {
   final SyncEngine syncEngine;
   final ScrollEngine scrollEngine;
   final VoidCallback onFullscreen;
   final VoidCallback onSettings;
-  final VoidCallback onEditLyrics;
   final VoidCallback onFormatLyrics;
   final VoidCallback onBack;
   final VoidCallback? onNextScript;
   final VoidCallback? onPrevScript;
+  final VoidCallback onToggleMirror;
+  final VoidCallback onTapTempo;
+  final VoidCallback onSetDuration;
+  final VoidCallback? onUnloadAudio;
+  final VoidCallback? onUnloadLrc;
+  final bool hasLrc;
+  final String? lrcFileName;
   final String? setlistPosition;
   final bool isFullscreen;
+  final bool isMirrored;
   final String songTitle;
+  final bool hasAudio;
+  final String? audioFileName;
+  final double audioVolume;
+  final ValueChanged<double> onVolumeChanged;
+  final bool hasChords;
+  final int transposeSteps;
+  final ValueChanged<int> onTransposeChanged;
+  final bool cueMode;
+  final VoidCallback onToggleCueMode;
+  final String? remoteUrl;
+  final SongTheme? songTheme;
+  final ValueChanged<SongTheme>? onThemeChanged;
+  final VoidCallback? onMoveToDisplay;
+  final bool isOnSecondDisplay;
 
   const ControlsOverlay({
     super.key,
@@ -25,14 +47,35 @@ class ControlsOverlay extends StatefulWidget {
     required this.scrollEngine,
     required this.onFullscreen,
     required this.onSettings,
-    required this.onEditLyrics,
     required this.onFormatLyrics,
     required this.onBack,
     this.onNextScript,
     this.onPrevScript,
+    required this.onToggleMirror,
+    required this.onTapTempo,
+    required this.onSetDuration,
+    this.onUnloadAudio,
+    this.onUnloadLrc,
+    this.hasLrc = false,
+    this.lrcFileName,
     this.setlistPosition,
     required this.isFullscreen,
+    required this.isMirrored,
     required this.songTitle,
+    required this.hasAudio,
+    this.audioFileName,
+    required this.audioVolume,
+    required this.onVolumeChanged,
+    this.hasChords = false,
+    this.transposeSteps = 0,
+    required this.onTransposeChanged,
+    this.cueMode = false,
+    required this.onToggleCueMode,
+    this.remoteUrl,
+    this.songTheme,
+    this.onThemeChanged,
+    this.onMoveToDisplay,
+    this.isOnSecondDisplay = false,
   });
 
   @override
@@ -95,7 +138,6 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         behavior: HitTestBehavior.translucent,
         child: Stack(
           children: [
-            // Auto-hiding bottom controls bar
             Positioned(
               left: 0,
               right: 0,
@@ -105,18 +147,16 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                 child: _buildBar(),
               ),
             ),
-            // Always-visible NEXT SONG button (right side)
             if (widget.onNextScript != null)
               Positioned(
-                right: 24,
-                bottom: AppDimensions.controlsHeight + 28,
+                right: 16,
+                bottom: AppDimensions.controlsHeight + 8,
                 child: _nextSongButton(),
               ),
-            // Always-visible PREV SONG button (left side)
             if (widget.onPrevScript != null)
               Positioned(
-                left: 24,
-                bottom: AppDimensions.controlsHeight + 28,
+                left: 16,
+                bottom: AppDimensions.controlsHeight + 8,
                 child: _prevSongButton(),
               ),
           ],
@@ -128,55 +168,41 @@ class _ControlsOverlayState extends State<ControlsOverlay>
   Widget _nextSongButton() {
     return Tooltip(
       message: 'Next song  [N]',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onNextScript,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 18),
-            decoration: BoxDecoration(
-              color: AppColors.accent,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
+      child: Opacity(
+        opacity: 0.75,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: widget.onNextScript,
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
                   color: AppColors.accent.withValues(alpha: 0.5),
-                  blurRadius: 24,
-                  spreadRadius: 2,
+                  width: 1,
                 ),
-              ],
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'NEXT SONG',
-                      style: TextStyle(
-                        fontFamily: AppTextStyles.fontFamily,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.black,
-                        letterSpacing: 2,
-                      ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'NEXT',
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.accent,
+                      letterSpacing: 1.5,
                     ),
-                    Text(
-                      'press  N',
-                      style: TextStyle(
-                        fontFamily: AppTextStyles.fontFamily,
-                        fontSize: 10,
-                        color: Colors.black54,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(width: 14),
-                Icon(Icons.skip_next_rounded, size: 36, color: Colors.black),
-              ],
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.skip_next_rounded,
+                      size: 18, color: AppColors.accent),
+                ],
+              ),
             ),
           ),
         ),
@@ -187,58 +213,41 @@ class _ControlsOverlayState extends State<ControlsOverlay>
   Widget _prevSongButton() {
     return Tooltip(
       message: 'Previous song  [P]',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onPrevScript,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceElevated,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: AppColors.sectionHeader.withValues(alpha: 0.3),
+      child: Opacity(
+        opacity: 0.75,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: widget.onPrevScript,
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: AppColors.sectionHeader.withValues(alpha: 0.4),
+                  width: 1,
+                ),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.4),
-                  blurRadius: 12,
-                ),
-              ],
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.skip_previous_rounded,
-                    size: 26, color: AppColors.sectionHeader),
-                SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'PREV SONG',
-                      style: TextStyle(
-                        fontFamily: AppTextStyles.fontFamily,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.sectionHeader,
-                        letterSpacing: 1.5,
-                      ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.skip_previous_rounded,
+                      size: 18, color: AppColors.sectionHeader),
+                  const SizedBox(width: 4),
+                  Text(
+                    'PREV',
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.sectionHeader,
+                      letterSpacing: 1.5,
                     ),
-                    Text(
-                      'press  P',
-                      style: TextStyle(
-                        fontFamily: AppTextStyles.fontFamily,
-                        fontSize: 9,
-                        color: AppColors.dimmedLine,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -260,7 +269,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
               colors: [AppColors.controlBackground, Colors.transparent],
             ),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -296,20 +306,35 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                   ),
                 ),
               ),
-              BpmIndicator(
-                beatStream: widget.syncEngine.beatStream,
-                bpm: state.bpm,
-                isVoiceActive: state.isVoiceActive,
-                voiceEnergy: state.voiceEnergy,
-              ),
-              const SizedBox(width: 16),
               _loopButton(),
+              if (widget.onMoveToDisplay != null) ...[
+                const SizedBox(width: 12),
+                _moveToDisplayButton(),
+              ],
               const SizedBox(width: 12),
-              _iconButton(
-                icon: Icons.edit_rounded,
-                onTap: widget.onEditLyrics,
-                tooltip: 'Edit lyrics',
-              ),
+              _themeButton(),
+              const SizedBox(width: 12),
+              _remoteButton(),
+              const SizedBox(width: 12),
+              _cueModeButton(),
+              const SizedBox(width: 12),
+              _mirrorButton(),
+              const SizedBox(width: 12),
+              _tapTempoButton(),
+              if (widget.hasChords) ...[
+                const SizedBox(width: 12),
+                _transposeControl(),
+              ],
+              const SizedBox(width: 12),
+              _durationButton(),
+              _audioButton(),
+              if (widget.hasAudio) ...[
+                const SizedBox(width: 4),
+                _volumeControl(),
+                const SizedBox(width: 8),
+                _lrcButton(),
+                const SizedBox(width: 4),
+              ],
               const SizedBox(width: 12),
               _iconButton(
                 icon: Icons.format_paint_rounded,
@@ -346,7 +371,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           icon: Icons.remove,
           size: 18,
           onTap: () => widget.syncEngine.adjustSpeed(-0.1),
-          tooltip: 'Slow down (↓)',
+          tooltip: 'Slow down (−)',
         ),
         const SizedBox(width: 8),
         SizedBox(
@@ -354,11 +379,13 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           child: SliderTheme(
             data: SliderThemeData(
               trackHeight: 2,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 6),
               activeTrackColor: AppColors.sliderActive,
               inactiveTrackColor: AppColors.sliderInactive,
               thumbColor: AppColors.sliderActive,
-              overlayColor: AppColors.sliderActive.withValues(alpha: 0.2),
+              overlayColor:
+                  AppColors.sliderActive.withValues(alpha: 0.2),
             ),
             child: Slider(
               value: state.manualMultiplier.clamp(
@@ -367,7 +394,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
               ),
               min: ScrollConstants.minSpeedMultiplier,
               max: ScrollConstants.maxSpeedMultiplier,
-              onChanged: (v) => widget.syncEngine.setManualMultiplier(v),
+              onChanged: (v) =>
+                  widget.syncEngine.setManualMultiplier(v),
             ),
           ),
         ),
@@ -376,7 +404,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           icon: Icons.add,
           size: 18,
           onTap: () => widget.syncEngine.adjustSpeed(0.1),
-          tooltip: 'Speed up (↑)',
+          tooltip: 'Speed up (+)',
         ),
         const SizedBox(width: 8),
         Text(
@@ -391,14 +419,12 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     );
   }
 
-  Widget _backButton() {
-    return _iconButton(
-      icon: Icons.arrow_back_rounded,
-      color: AppColors.sectionHeader,
-      onTap: widget.onBack,
-      tooltip: 'Back to editor (ESC)',
-    );
-  }
+  Widget _backButton() => _iconButton(
+        icon: Icons.arrow_back_rounded,
+        color: AppColors.sectionHeader,
+        onTap: widget.onBack,
+        tooltip: 'Back (ESC)',
+      );
 
   Widget _loopButton() {
     return ListenableBuilder(
@@ -408,28 +434,392 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         return _iconButton(
           icon: Icons.repeat_rounded,
           color: enabled ? AppColors.loopMarker : AppColors.sectionHeader,
-          onTap: () => widget.scrollEngine.setLoopEnabled(!enabled),
+          onTap: () =>
+              widget.scrollEngine.setLoopEnabled(!enabled),
           tooltip: 'Loop section (L)',
         );
       },
     );
   }
 
-  Widget _settingsButton() {
-    return _iconButton(
-      icon: Icons.tune_rounded,
-      onTap: widget.onSettings,
-      tooltip: 'Settings',
+  Widget _mirrorButton() => _iconButton(
+        icon: Icons.flip_rounded,
+        color: widget.isMirrored ? AppColors.accent : AppColors.inactiveLine,
+        onTap: widget.onToggleMirror,
+        tooltip: 'Mirror flip (M)',
+      );
+
+  Widget _tapTempoButton() => _iconButton(
+        icon: Icons.touch_app_rounded,
+        onTap: widget.onTapTempo,
+        tooltip: 'Tap tempo (T) — tap 4+ times to set speed',
+      );
+
+  Widget _durationButton() => _iconButton(
+        icon: Icons.timer_outlined,
+        onTap: widget.onSetDuration,
+        tooltip: 'Set song duration — auto-calculates scroll speed',
+      );
+
+  Widget _lrcButton() {
+    if (!widget.hasLrc) return const SizedBox.shrink();
+    return Tooltip(
+      message: 'Synced lyrics: ${widget.lrcFileName ?? "loaded"}  (right-click to remove)',
+      child: GestureDetector(
+        onSecondaryTap: widget.onUnloadLrc,
+        child: _iconButton(
+          icon: Icons.lyrics_rounded,
+          color: AppColors.accent,
+          onTap: null,
+          tooltip: null,
+        ),
+      ),
     );
   }
 
-  Widget _fullscreenButton() {
-    return _iconButton(
-      icon: widget.isFullscreen
-          ? Icons.fullscreen_exit_rounded
-          : Icons.fullscreen_rounded,
-      onTap: widget.onFullscreen,
-      tooltip: widget.isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)',
+  Widget _audioButton() {
+    if (!widget.hasAudio) return const SizedBox.shrink();
+    return Tooltip(
+      message: 'Audio: ${widget.audioFileName ?? "loaded"}  (right-click to remove)',
+      child: GestureDetector(
+        onSecondaryTap: widget.onUnloadAudio,
+        child: _iconButton(
+          icon: Icons.music_note_rounded,
+          color: AppColors.accent,
+          onTap: null,
+          tooltip: null,
+        ),
+      ),
+    );
+  }
+
+  Widget _volumeControl() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          widget.audioVolume == 0
+              ? Icons.volume_off_rounded
+              : widget.audioVolume < 0.5
+                  ? Icons.volume_down_rounded
+                  : Icons.volume_up_rounded,
+          size: 16,
+          color: AppColors.sectionHeader,
+        ),
+        const SizedBox(width: 2),
+        SizedBox(
+          width: 72,
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 2,
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 5),
+              activeTrackColor: AppColors.accent.withValues(alpha: 0.7),
+              inactiveTrackColor: AppColors.sliderInactive,
+              thumbColor: AppColors.accent,
+              overlayColor: AppColors.accent.withValues(alpha: 0.15),
+            ),
+            child: Slider(
+              value: widget.audioVolume,
+              min: 0.0,
+              max: 1.0,
+              onChanged: widget.onVolumeChanged,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _settingsButton() => _iconButton(
+        icon: Icons.tune_rounded,
+        onTap: widget.onSettings,
+        tooltip: 'Settings',
+      );
+
+  Widget _fullscreenButton() => _iconButton(
+        icon: widget.isFullscreen
+            ? Icons.fullscreen_exit_rounded
+            : Icons.fullscreen_rounded,
+        onTap: widget.onFullscreen,
+        tooltip: widget.isFullscreen
+            ? 'Exit fullscreen (F)'
+            : 'Fullscreen (F)',
+      );
+
+  Widget _themeButton() {
+    final theme = widget.songTheme;
+    return Tooltip(
+      message: 'Song colour theme',
+      child: InkWell(
+        onTap: widget.onThemeChanged != null ? _showThemePicker : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: theme?.accent ?? AppColors.accent,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: AppColors.sectionHeader.withValues(alpha: 0.4),
+                width: 1.5,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showThemePicker() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Song Colour Theme',
+          style: TextStyle(
+            fontFamily: AppTextStyles.fontFamily,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.activeLine,
+          ),
+        ),
+        content: SizedBox(
+          width: 340,
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: SongTheme.presets.map((t) {
+              final selected = widget.songTheme?.id == t.id;
+              return GestureDetector(
+                onTap: () {
+                  widget.onThemeChanged!(t);
+                  Navigator.of(ctx).pop();
+                },
+                child: Container(
+                  width: 96,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: t.background,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: selected
+                          ? t.accent
+                          : AppColors.sectionHeader.withValues(alpha: 0.2),
+                      width: selected ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: t.accent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        t.label,
+                        style: TextStyle(
+                          fontFamily: AppTextStyles.fontFamily,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: t.accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                color: AppColors.sectionHeader,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _remoteButton() {
+    final active = widget.remoteUrl != null;
+    return Tooltip(
+      message: active ? 'Remote: ${widget.remoteUrl}' : 'Remote control unavailable',
+      child: _iconButton(
+        icon: Icons.wifi_rounded,
+        color: active ? AppColors.accent : AppColors.inactiveLine,
+        onTap: active
+            ? () => _showRemoteDialog(widget.remoteUrl!)
+            : null,
+        tooltip: null,
+      ),
+    );
+  }
+
+  void _showRemoteDialog(String url) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Phone Remote Control',
+          style: TextStyle(
+            fontFamily: AppTextStyles.fontFamily,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: AppColors.activeLine,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Text(
+              'Scan with your phone or open the address below\n(must be on the same Wi-Fi network)',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 12,
+                color: AppColors.sectionHeader,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: 180,
+              height: 180,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.all(8),
+              child: Image.network(
+                'https://api.qrserver.com/v1/create-qr-code/'
+                '?size=200x200&margin=0&data=${Uri.encodeComponent(url)}',
+                fit: BoxFit.contain,
+                loadingBuilder: (ctx, child, progress) => progress == null
+                    ? child
+                    : const Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.accent,
+                          ),
+                        ),
+                      ),
+                errorBuilder: (ctx, err, stack) => const Center(
+                  child: Icon(Icons.qr_code_2_rounded,
+                      size: 48, color: AppColors.sectionHeader),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceElevated,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: SelectableText(
+                url,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontFamily: AppTextStyles.fontFamily,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.accent,
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'Close',
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                color: AppColors.sectionHeader,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _moveToDisplayButton() => _iconButton(
+        icon: _isOnSecondDisplay
+            ? Icons.monitor_rounded
+            : Icons.cast_rounded,
+        color: _isOnSecondDisplay ? AppColors.accent : AppColors.inactiveLine,
+        onTap: widget.onMoveToDisplay,
+        tooltip: _isOnSecondDisplay
+            ? 'Return to main display'
+            : 'Move to second display',
+      );
+
+  bool get _isOnSecondDisplay => widget.isOnSecondDisplay;
+
+  Widget _cueModeButton() => _iconButton(
+        icon: Icons.touch_app_outlined,
+        color: widget.cueMode ? AppColors.accent : AppColors.inactiveLine,
+        onTap: widget.onToggleCueMode,
+        tooltip: widget.cueMode ? 'Cue mode ON — Space advances one line' : 'Cue mode OFF — tap to enable',
+      );
+
+  Widget _transposeControl() {
+    final label = ChordTransposer.offsetLabel(widget.transposeSteps);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _iconButton(
+          icon: Icons.arrow_drop_down_rounded,
+          size: 20,
+          onTap: () => widget.onTransposeChanged(widget.transposeSteps - 1),
+          tooltip: 'Transpose down one semitone',
+        ),
+        SizedBox(
+          width: 36,
+          child: Text(
+            label == '0' ? '♩' : label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: AppTextStyles.fontFamily,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: label == '0' ? AppColors.sectionHeader : AppColors.accent,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        _iconButton(
+          icon: Icons.arrow_drop_up_rounded,
+          size: 20,
+          onTap: () => widget.onTransposeChanged(widget.transposeSteps + 1),
+          tooltip: 'Transpose up one semitone',
+        ),
+      ],
     );
   }
 
@@ -437,7 +827,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     required IconData icon,
     double size = 22,
     Color color = AppColors.inactiveLine,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     String? tooltip,
   }) {
     final btn = InkWell(
@@ -448,9 +838,6 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         child: Icon(icon, size: size, color: color),
       ),
     );
-    if (tooltip != null) {
-      return Tooltip(message: tooltip, child: btn);
-    }
-    return btn;
+    return tooltip != null ? Tooltip(message: tooltip, child: btn) : btn;
   }
 }

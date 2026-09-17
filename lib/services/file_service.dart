@@ -20,7 +20,8 @@ class FileService {
     if (file.path == null) return null;
 
     final content = await File(file.path!).readAsString();
-    final title = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final name = file.name as String;
+    final title = name.replaceAll(RegExp(r'\.[^.]+$'), '');
     return (content: content, title: title);
   }
 

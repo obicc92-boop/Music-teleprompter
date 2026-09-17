@@ -1,22 +1,15 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:record/record.dart' show InputDevice;
 import '../engine/sync_engine.dart';
-import '../engine/voice_profiler.dart';
 import '../services/settings_service.dart';
-import '../services/voice_profile_service.dart';
-import '../services/word_recognition_service.dart';
 import '../utils/constants.dart';
-import '../widgets/enrollment_dialog.dart';
 
-// Re-export so callers don't need a separate import
 export '../utils/constants.dart' show DisplayFont;
+
+enum _Section { display, playback, controls, shortcuts }
 
 class SettingsView extends StatefulWidget {
   final AppSettings settings;
   final SyncEngine syncEngine;
-  final VoiceProfiler voiceProfiler;
-  final VoiceProfileService voiceProfileService;
   final void Function(AppSettings) onChanged;
   final VoidCallback onClose;
 
@@ -24,8 +17,6 @@ class SettingsView extends StatefulWidget {
     super.key,
     required this.settings,
     required this.syncEngine,
-    required this.voiceProfiler,
-    required this.voiceProfileService,
     required this.onChanged,
     required this.onClose,
   });
@@ -36,504 +27,551 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   late AppSettings _settings;
-  late final SettingsService _service;
-  List<InputDevice> _audioDevices = [];
-  bool _loadingDevices = false;
+  _Section _section = _Section.display;
 
   @override
   void initState() {
     super.initState();
     _settings = widget.settings;
-    _service = SettingsService();
-    _refreshDevices();
-  }
-
-  Future<void> _refreshDevices() async {
-    setState(() => _loadingDevices = true);
-    final devices = await widget.syncEngine.listInputDevices();
-    if (mounted) setState(() { _audioDevices = devices; _loadingDevices = false; });
   }
 
   void _update(AppSettings updated) {
     setState(() => _settings = updated);
-    _service.save(updated);
+    SettingsService().save(updated);
     widget.onChanged(updated);
-    widget.syncEngine.updateVoiceSensitivity(updated.voiceSensitivity);
     widget.syncEngine.setManualMultiplier(updated.scrollSpeedMultiplier);
-    if (updated.useManualBpm) {
-      widget.syncEngine.setManualBpm(updated.manualBpmOverride);
-    }
-    widget.syncEngine.setUseManualBpm(updated.useManualBpm);
-    widget.syncEngine.setAutoScrollOnVoice(updated.autoScrollOnVoice);
-    widget.syncEngine.setVoiceWordSync(updated.wordSyncMode != WordSyncMode.off);
   }
+
+  // ── Layout ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final maxHeight = MediaQuery.of(context).size.height - 80;
     return Material(
       color: AppColors.surface,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 420),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+        constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 560),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-            _header(),
-            const SizedBox(height: 20),
-            _section('DISPLAY'),
-            _fontSizeRow(),
-            const SizedBox(height: 12),
-            _fontPickerRow(),
-            const SizedBox(height: 16),
-            _section('SCROLL'),
-            _speedRow(),
-            _toggleRow(
-              'Auto-scroll on voice',
-              _settings.autoScrollOnVoice,
-              (v) => _update(_settings.copyWith(autoScrollOnVoice: v)),
-            ),
-            _toggleRow(
-              'Auto-advance to next song',
-              _settings.autoAdvance,
-              (v) => _update(_settings.copyWith(autoAdvance: v)),
-            ),
-            const SizedBox(height: 16),
-            _section('AUDIO'),
-            _audioDeviceRow(),
-            const SizedBox(height: 8),
-            _voiceSensitivityRow(),
-            _bpmRow(),
-            const SizedBox(height: 16),
-            _section('WORD SYNC'),
-            _wordSyncModeRow(),
-            if (_settings.wordSyncMode == WordSyncMode.whisper ||
-                _settings.wordSyncMode == WordSyncMode.whisperAlign)
-              _whisperModelRow(),
-            const SizedBox(height: 16),
-            _section('FEATURES'),
-            _toggleRow(
-              'Karaoke highlight',
-              _settings.karaokeMode,
-              (v) => _update(_settings.copyWith(karaokeMode: v)),
-            ),
-            const SizedBox(height: 16),
-            _section('FOOT PEDAL'),
-            _pedalActionRow(),
-            const SizedBox(height: 16),
-            _section('VOICE FINGERPRINT'),
-            _voiceFingerprintRow(),
-            const SizedBox(height: 24),
-            _closeButton(),
-          ],
+              _Sidebar(
+                selected: _section,
+                onSelected: (s) => setState(() => _section = s),
+              ),
+              _VerticalDivider(),
+              Expanded(child: _buildContent()),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
 
-  Widget _header() {
-    return Row(
+  Widget _buildContent() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'SETTINGS',
-          style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
-            fontSize: 14,
-            color: AppColors.activeLine,
-            letterSpacing: 2,
-            fontWeight: FontWeight.w700,
-          ),
+        _ContentHeader(
+          title: switch (_section) {
+            _Section.display   => 'Display',
+            _Section.playback  => 'Playback',
+            _Section.controls  => 'Controls',
+            _Section.shortcuts => 'Keyboard Shortcuts',
+          },
+          onClose: widget.onClose,
         ),
-        const Spacer(),
-        IconButton(
-          icon: const Icon(Icons.close, color: AppColors.sectionHeader),
-          onPressed: widget.onClose,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+            child: switch (_section) {
+              _Section.display   => _displayPanel(),
+              _Section.playback  => _playbackPanel(),
+              _Section.controls  => _controlsPanel(),
+              _Section.shortcuts => _shortcutsPanel(),
+            },
+          ),
         ),
       ],
     );
   }
 
-  Widget _section(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontFamily: AppTextStyles.fontFamily,
-          fontSize: 10,
-          color: AppColors.sectionHeader,
-          letterSpacing: 2,
-        ),
-      ),
-    );
-  }
+  // ── Display panel ──────────────────────────────────────────────────────────
 
-  Widget _fontSizeRow() {
-    return _sliderRow(
-      label: 'Font Size',
-      value: _settings.fontSize,
-      min: AppDimensions.minFontSize,
-      max: AppDimensions.maxFontSize,
-      displayValue: '${_settings.fontSize.round()}px',
-      onChanged: (v) => _update(_settings.copyWith(fontSize: v)),
-    );
-  }
-
-  Widget _fontPickerRow() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 130,
-            child: Text(
-              'Teleprompter Font',
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 13,
-                color: AppColors.inactiveLine,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Row(
-              children: DisplayFont.options.map((font) {
-                final isSelected = _settings.displayFont == font.family;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: GestureDetector(
-                    onTap: () =>
-                        _update(_settings.copyWith(displayFont: font.family)),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? AppColors.accent.withValues(alpha: 0.15)
-                            : AppColors.surfaceElevated,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: isSelected
-                              ? AppColors.accent
-                              : Colors.transparent,
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Aa',
-                            style: TextStyle(
-                              fontFamily: font.family,
-                              fontSize: 15,
-                              color: isSelected
-                                  ? AppColors.accent
-                                  : AppColors.inactiveLine,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            font.label,
-                            style: TextStyle(
-                              fontFamily: AppTextStyles.fontFamily,
-                              fontSize: 9,
-                              color: isSelected
-                                  ? AppColors.accent
-                                  : AppColors.sectionHeader,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _speedRow() {
-    return _sliderRow(
-      label: 'Default Speed',
-      value: _settings.scrollSpeedMultiplier,
-      min: ScrollConstants.minSpeedMultiplier,
-      max: ScrollConstants.maxSpeedMultiplier,
-      displayValue: '${_settings.scrollSpeedMultiplier.toStringAsFixed(1)}x',
-      onChanged: (v) => _update(_settings.copyWith(scrollSpeedMultiplier: v)),
-    );
-  }
-
-  Widget _audioDeviceRow() {
-    // Current label — either a matched device name or fallback text
-    final currentLabel = _settings.audioDeviceId == null
-        ? 'System Default'
-        : _audioDevices
-                .cast<InputDevice?>()
-                .firstWhere((d) => d?.id == _settings.audioDeviceId,
-                    orElse: () => null)
-                ?.label ??
-            'Unknown device';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 130,
-            child: Text(
-              'Input Device',
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 13,
-                color: AppColors.inactiveLine,
-              ),
-            ),
-          ),
-          Expanded(
-            child: _loadingDevices
-                ? const Text(
-                    'Scanning…',
-                    style: TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
-                      fontSize: 12,
-                      color: AppColors.sectionHeader,
-                    ),
-                  )
-                : GestureDetector(
-                    onTapDown: (details) => _showDeviceMenu(details.globalPosition),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceElevated,
-                        borderRadius: BorderRadius.circular(7),
-                        border: Border.all(
-                          color: _settings.audioDeviceId != null
-                              ? AppColors.accent.withValues(alpha: 0.5)
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              currentLabel,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontFamily: AppTextStyles.fontFamily,
-                                fontSize: 12,
-                                color: _settings.audioDeviceId != null
-                                    ? AppColors.activeLine
-                                    : AppColors.sectionHeader,
-                              ),
-                            ),
-                          ),
-                          const Icon(Icons.expand_more_rounded,
-                              size: 14, color: AppColors.sectionHeader),
-                        ],
-                      ),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'Refresh device list',
-            child: InkWell(
-              onTap: _refreshDevices,
-              borderRadius: BorderRadius.circular(6),
-              child: const Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.refresh_rounded,
-                    size: 15, color: AppColors.sectionHeader),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static const _kDefaultDevice = '__default__';
-
-  Future<void> _showDeviceMenu(Offset position) async {
-    final items = <PopupMenuEntry<String>>[
-      const PopupMenuItem<String>(
-        value: _kDefaultDevice,
-        child: Text(
-          'System Default',
-          style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
-            fontSize: 13,
-            color: AppColors.activeLine,
-          ),
-        ),
-      ),
-      if (_audioDevices.isNotEmpty) const PopupMenuDivider(),
-      ..._audioDevices.map((d) => PopupMenuItem<String>(
-            value: d.id,
-            child: Row(
-              children: [
-                const Icon(Icons.mic_rounded, size: 14, color: AppColors.sectionHeader),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    d.label,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
-                      fontSize: 13,
-                      color: AppColors.activeLine,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          )),
-    ];
-
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx, position.dy, position.dx + 1, position.dy + 1,
-      ),
-      items: items,
-      color: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      constraints: const BoxConstraints(minWidth: 240),
-    );
-
-    if (!mounted || selected == null) return;
-    _applyDevice(selected == _kDefaultDevice ? null : selected);
-  }
-
-  void _applyDevice(String? deviceId) {
-    _update(_settings.copyWith(audioDeviceId: deviceId));
-    widget.syncEngine.setDevice(deviceId);
-  }
-
-  Widget _voiceSensitivityRow() {
-    return _sliderRow(
-      label: 'Voice Sensitivity',
-      value: _settings.voiceSensitivity * 1000,
-      min: 1,
-      max: 100,
-      displayValue: _settings.voiceSensitivity.toStringAsFixed(3),
-      onChanged: (v) => _update(_settings.copyWith(voiceSensitivity: v / 1000)),
-    );
-  }
-
-  Widget _bpmRow() {
+  Widget _displayPanel() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _toggleRow(
-          'Manual BPM Override',
-          _settings.useManualBpm,
-          (v) => _update(_settings.copyWith(useManualBpm: v)),
-        ),
-        if (_settings.useManualBpm)
-          _sliderRow(
-            label: 'BPM',
-            value: _settings.manualBpmOverride,
-            min: AudioConstants.minBpm,
-            max: AudioConstants.maxBpm,
-            displayValue: '${_settings.manualBpmOverride.round()}',
-            onChanged: (v) => _update(_settings.copyWith(manualBpmOverride: v)),
+        _SettingRow(
+          label: 'Font Size',
+          trailing: _ValueBadge('${_settings.fontSize.round()} px'),
+          child: _styledSlider(
+            value: _settings.fontSize,
+            min: AppDimensions.minFontSize,
+            max: AppDimensions.maxFontSize,
+            onChanged: (v) => _update(_settings.copyWith(fontSize: v)),
           ),
+        ),
+        _Divider(),
+        _SettingRow(
+          label: 'Typeface',
+          child: Wrap(
+            spacing: 8,
+            children: DisplayFont.options.map((font) {
+              final selected = _settings.displayFont == font.family;
+              return _FontChip(
+                font: font,
+                selected: selected,
+                onTap: () => _update(_settings.copyWith(displayFont: font.family)),
+              );
+            }).toList(),
+          ),
+        ),
+        _Divider(),
+        _SettingRow(
+          label: 'Text Alignment',
+          child: Row(
+            children: [
+              _Chip(
+                label: 'Center',
+                selected: !_settings.textAlignLeft,
+                onTap: () => _update(_settings.copyWith(textAlignLeft: false)),
+              ),
+              const SizedBox(width: 8),
+              _Chip(
+                label: 'Left',
+                selected: _settings.textAlignLeft,
+                onTap: () => _update(_settings.copyWith(textAlignLeft: true)),
+              ),
+            ],
+          ),
+        ),
+        _Divider(),
+        _ToggleRow(
+          label: 'Active Line Highlight',
+          sublabel: 'Brightens the current line and dims the rest',
+          value: _settings.showActiveLineHighlight,
+          onChanged: (v) => _update(_settings.copyWith(showActiveLineHighlight: v)),
+        ),
+        _Divider(),
+        _SettingRow(
+          label: 'Active Line Position',
+          trailing: _ValueBadge('${(_settings.activeLineYOffset * 100).round()}% from top'),
+          child: _styledSlider(
+            value: _settings.activeLineYOffset,
+            min: 0.1,
+            max: 0.75,
+            divisions: 13,
+            onChanged: (v) => _update(_settings.copyWith(activeLineYOffset: v)),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _sliderRow({
-    required String label,
+  // ── Playback panel ─────────────────────────────────────────────────────────
+
+  Widget _playbackPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SettingRow(
+          label: 'Default Speed',
+          trailing: _ValueBadge('${_settings.scrollSpeedMultiplier.toStringAsFixed(1)}×'),
+          child: _styledSlider(
+            value: _settings.scrollSpeedMultiplier,
+            min: ScrollConstants.minSpeedMultiplier,
+            max: ScrollConstants.maxSpeedMultiplier,
+            onChanged: (v) => _update(_settings.copyWith(scrollSpeedMultiplier: v)),
+          ),
+        ),
+        _Divider(),
+        _ToggleRow(
+          label: 'Auto-advance to next song',
+          sublabel: 'Loads the next setlist song when the current one ends',
+          value: _settings.autoAdvance,
+          onChanged: (v) => _update(_settings.copyWith(autoAdvance: v)),
+        ),
+      ],
+    );
+  }
+
+  // ── Controls panel ─────────────────────────────────────────────────────────
+
+  Widget _controlsPanel() {
+    const actions = [
+      ('nextSection', 'Next Section'),
+      ('nextSong',    'Next Song'),
+      ('playPause',   'Play / Pause'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SettingRow(
+          label: 'Foot Pedal — Forward Action',
+          sublabel: 'What PageDown / Enter does during performance',
+          child: Wrap(
+            spacing: 8,
+            children: actions.map((e) {
+              final (value, label) = e;
+              return _Chip(
+                label: label,
+                selected: _settings.pedalAction == value,
+                onTap: () => _update(_settings.copyWith(pedalAction: value)),
+              );
+            }).toList(),
+          ),
+        ),
+        _Divider(),
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: _HintBox(
+            lines: [
+              'PageDown / Enter  →  forward action',
+              'PageUp  →  always goes back one section',
+              'Compatible with AirTurn, PageFlip, and most HID pedals',
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Shortcuts panel ────────────────────────────────────────────────────────
+
+  Widget _shortcutsPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ShortcutGroup(
+          title: 'Playback',
+          rows: const [
+            ('Space', 'Play / Pause'),
+            ('+ / −', 'Speed up / Slow down'),
+            ('T', 'Tap Tempo'),
+            ('R', 'Reset to start'),
+            ('L', 'Toggle loop section'),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _ShortcutGroup(
+          title: 'Navigation',
+          rows: const [
+            ('↑ / ↓', 'Scroll up / Scroll down'),
+            ('→ / ←', 'Next / Previous section'),
+            ('N', 'Next song'),
+            ('P', 'Previous song'),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _ShortcutGroup(
+          title: 'Display',
+          rows: const [
+            ('F', 'Toggle fullscreen'),
+            ('M', 'Toggle mirror mode'),
+            ('Esc', 'Back to setlist'),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _ShortcutGroup(
+          title: 'Foot Pedal (configurable in Controls)',
+          rows: const [
+            ('PageDown / Enter', 'Forward action'),
+            ('PageUp', 'Backward action'),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const _HintBox(lines: [
+          'Foot pedal action is set in the Controls tab',
+          'Compatible with AirTurn, PageFlip, and most HID pedals',
+        ]),
+      ],
+    );
+  }
+
+  // ── Shared slider ──────────────────────────────────────────────────────────
+
+  Widget _styledSlider({
     required double value,
     required double min,
     required double max,
-    required String displayValue,
-    required void Function(double) onChanged,
+    int? divisions,
+    required ValueChanged<double> onChanged,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+    return SliderTheme(
+      data: SliderThemeData(
+        trackHeight: 2,
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+        activeTrackColor: AppColors.sliderActive,
+        inactiveTrackColor: AppColors.sliderInactive,
+        thumbColor: AppColors.sliderActive,
+        overlayColor: AppColors.sliderActive.withValues(alpha: 0.15),
+      ),
+      child: Slider(
+        value: value.clamp(min, max),
+        min: min,
+        max: max,
+        divisions: divisions,
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+
+class _Sidebar extends StatelessWidget {
+  final _Section selected;
+  final ValueChanged<_Section> onSelected;
+
+  const _Sidebar({required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 116,
+      color: AppColors.surface,
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 130,
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 13,
-                color: AppColors.inactiveLine,
-              ),
-            ),
+          const SizedBox(height: 36), // align with header height
+          _SidebarItem(
+            icon: Icons.text_fields_rounded,
+            label: 'Display',
+            selected: selected == _Section.display,
+            onTap: () => onSelected(_Section.display),
           ),
-          Expanded(
-            child: SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                activeTrackColor: AppColors.sliderActive,
-                inactiveTrackColor: AppColors.sliderInactive,
-                thumbColor: AppColors.sliderActive,
-                overlayColor: AppColors.sliderActive.withValues(alpha: 0.2),
-              ),
-              child: Slider(
-                value: value.clamp(min, max),
-                min: min,
-                max: max,
-                onChanged: onChanged,
-              ),
-            ),
+          _SidebarItem(
+            icon: Icons.tune_rounded,
+            label: 'Playback',
+            selected: selected == _Section.playback,
+            onTap: () => onSelected(_Section.playback),
           ),
-          SizedBox(
-            width: 52,
-            child: Text(
-              displayValue,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 12,
-                color: AppColors.sectionHeader,
-              ),
-            ),
+          _SidebarItem(
+            icon: Icons.keyboard_rounded,
+            label: 'Controls',
+            selected: selected == _Section.controls,
+            onTap: () => onSelected(_Section.controls),
+          ),
+          _SidebarItem(
+            icon: Icons.keyboard_alt_outlined,
+            label: 'Shortcuts',
+            selected: selected == _Section.shortcuts,
+            onTap: () => onSelected(_Section.shortcuts),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _toggleRow(String label, bool value, void Function(bool) onChanged) {
+class _SidebarItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SidebarItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accent : AppColors.sectionHeader;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.accent.withValues(alpha: 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Content chrome ─────────────────────────────────────────────────────────
+
+class _ContentHeader extends StatelessWidget {
+  final String title;
+  final VoidCallback onClose;
+
+  const _ContentHeader({required this.title, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.fromLTRB(24, 18, 16, 14),
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 13,
-                color: AppColors.inactiveLine,
+          Text(
+            title,
+            style: const TextStyle(
+              fontFamily: AppTextStyles.fontFamily,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: AppColors.activeLine,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 18),
+            color: AppColors.sectionHeader,
+            onPressed: onClose,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            splashRadius: 16,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Setting rows ───────────────────────────────────────────────────────────
+
+class _SettingRow extends StatelessWidget {
+  final String label;
+  final String? sublabel;
+  final Widget? trailing;
+  final Widget child;
+
+  const _SettingRow({
+    required this.label,
+    this.sublabel,
+    this.trailing,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontFamily: AppTextStyles.fontFamily,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.inactiveLine,
+                      ),
+                    ),
+                    if (sublabel != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        sublabel!,
+                        style: const TextStyle(
+                          fontFamily: AppTextStyles.fontFamily,
+                          fontSize: 10,
+                          color: AppColors.sectionHeader,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
+              ?trailing,
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _ToggleRow extends StatelessWidget {
+  final String label;
+  final String? sublabel;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _ToggleRow({
+    required this.label,
+    this.sublabel,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.inactiveLine,
+                  ),
+                ),
+                if (sublabel != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    sublabel!,
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 10,
+                      color: AppColors.sectionHeader,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           Switch(
             value: value,
             onChanged: onChanged,
             activeThumbColor: AppColors.accent,
-            activeTrackColor: AppColors.accent.withValues(alpha: 0.4),
+            activeTrackColor: AppColors.accent.withValues(alpha: 0.35),
             inactiveThumbColor: AppColors.sectionHeader,
             inactiveTrackColor: AppColors.surfaceElevated,
           ),
@@ -541,314 +579,269 @@ class _SettingsViewState extends State<SettingsView> {
       ),
     );
   }
+}
 
-  Widget _wordSyncModeRow() {
-    const modes = [
-      (WordSyncMode.off, 'Off', 'Auto-scroll only'),
-      (WordSyncMode.onset, 'Onset', 'Energy pulse'),
-      (WordSyncMode.systemStt, 'Apple STT', 'On-device speech'),
-      (WordSyncMode.whisper, 'Whisper', 'Local AI model'),
-      (WordSyncMode.whisperAlign, 'Align', 'Word timestamps'),
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: modes.map((entry) {
-              final (mode, label, sub) = entry;
-              final selected = _settings.wordSyncMode == mode;
-              return GestureDetector(
-                onTap: () => _update(_settings.copyWith(wordSyncMode: mode)),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? AppColors.accent.withValues(alpha: 0.15)
-                        : AppColors.surfaceElevated,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: selected ? AppColors.accent : Colors.transparent,
-                      width: 1.5,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        label,
-                        style: TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: selected ? AppColors.accent : AppColors.inactiveLine,
-                        ),
-                      ),
-                      Text(
-                        sub,
-                        style: TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
-                          fontSize: 9,
-                          color: selected ? AppColors.accent.withValues(alpha: 0.7) : AppColors.sectionHeader,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.only(bottom: 4),
-          child: Text(
-            'Onset: energy pulses  ·  Apple STT: real-time speech recognition\nWhisper: best accuracy, needs brew install whisper-cpp  ·  Align: word-level timestamps',
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: 10,
-              color: AppColors.sectionHeader,
-              height: 1.6,
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-      ],
+// ── Small reusable atoms ───────────────────────────────────────────────────
+
+class _VerticalDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      color: AppColors.surfaceElevated,
     );
   }
+}
 
-  Widget _whisperModelRow() {
-    final hasPath = _settings.whisperModelPath.isNotEmpty;
-    final filename = hasPath
-        ? _settings.whisperModelPath.split('/').last
-        : 'No model selected';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Icon(
-            hasPath ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
-            size: 14,
-            color: hasPath ? AppColors.accent : const Color(0xFFFFA726),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              filename,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 11,
-                color: hasPath ? AppColors.inactiveLine : const Color(0xFFFFA726),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          _smallButton(
-            label: 'Pick model',
-            color: AppColors.accent,
-            onTap: _pickWhisperModel,
-          ),
-        ],
+class _Divider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 1,
+      color: AppColors.surfaceElevated,
+    );
+  }
+}
+
+class _ValueBadge extends StatelessWidget {
+  final String text;
+  const _ValueBadge(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(6),
       ),
-    );
-  }
-
-  Future<void> _pickWhisperModel() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['bin'],
-      dialogTitle: 'Select Whisper GGML model (.bin)',
-    );
-    if (result != null && result.files.single.path != null) {
-      _update(_settings.copyWith(whisperModelPath: result.files.single.path!));
-    }
-  }
-
-  Widget _pedalActionRow() {
-    const actions = [
-      ('nextSection', 'Next Section'),
-      ('nextSong', 'Next Song'),
-      ('playPause', 'Play / Pause'),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: actions.map((entry) {
-              final (value, label) = entry;
-              final isSelected = _settings.pedalAction == value;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: GestureDetector(
-                  onTap: () => _update(_settings.copyWith(pedalAction: value)),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.accent.withValues(alpha: 0.15)
-                          : AppColors.surfaceElevated,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: isSelected ? AppColors.accent : Colors.transparent,
-                        width: 1.5,
-                      ),
-                    ),
-                    child: Text(
-                      label,
-                      style: TextStyle(
-                        fontFamily: AppTextStyles.fontFamily,
-                        fontSize: 11,
-                        color: isSelected ? AppColors.accent : AppColors.inactiveLine,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.only(bottom: 4),
-          child: Text(
-            'PageDown / Enter = forward  ·  PageUp = back\nCompatible with AirTurn, PageFlip, and similar HID pedals',
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: 10,
-              color: AppColors.sectionHeader,
-              height: 1.6,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _voiceFingerprintRow() {
-    return ListenableBuilder(
-      listenable: widget.voiceProfiler,
-      builder: (context, _) {
-        final profiler = widget.voiceProfiler;
-        final hasProfile = profiler.hasProfile;
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              Icon(
-                hasProfile
-                    ? Icons.record_voice_over_rounded
-                    : Icons.mic_off_rounded,
-                size: 16,
-                color: hasProfile ? AppColors.accent : AppColors.sectionHeader,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  hasProfile
-                      ? 'Voice profile active'
-                      : 'No profile — scrolls on any sound',
-                  style: TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
-                    fontSize: 12,
-                    color: hasProfile
-                        ? AppColors.activeLine
-                        : AppColors.sectionHeader,
-                  ),
-                ),
-              ),
-              if (hasProfile)
-                _smallButton(
-                  label: 'Clear',
-                  color: const Color(0xFFEF5350),
-                  onTap: () async {
-                    profiler.clearProfile();
-                    await widget.voiceProfileService.delete();
-                  },
-                ),
-              const SizedBox(width: 8),
-              _smallButton(
-                label: hasProfile ? 'Re-enroll' : 'Enroll',
-                color: AppColors.accent,
-                onTap: () => _openEnrollment(),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _openEnrollment() {
-    showDialog<void>(
-      context: context,
-      barrierColor: Colors.black54,
-      builder: (ctx) => Center(
-        child: EnrollmentDialog(
-          profiler: widget.voiceProfiler,
-          onProfileBuilt: () async {
-            final vector = widget.voiceProfiler.profileVector;
-            if (vector != null) {
-              await widget.voiceProfileService.save(List<double>.from(vector));
-            }
-          },
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontFamily: AppTextStyles.fontFamily,
+          fontSize: 11,
+          color: AppColors.sectionHeader,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
+}
 
-  Widget _smallButton({
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
+class _Chip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _Chip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withValues(alpha: 0.4)),
+          color: selected
+              ? AppColors.accent.withValues(alpha: 0.14)
+              : AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? AppColors.accent : Colors.transparent,
+            width: 1.5,
+          ),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontFamily: AppTextStyles.fontFamily,
-            fontSize: 11,
-            color: color,
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+            color: selected ? AppColors.accent : AppColors.inactiveLine,
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _closeButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: widget.onClose,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.surfaceElevated,
-          foregroundColor: AppColors.activeLine,
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-        child: const Text(
-          'CLOSE',
-          style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
-            letterSpacing: 2,
-            fontSize: 12,
+class _FontChip extends StatelessWidget {
+  final DisplayFont font;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FontChip({
+    required this.font,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.accent.withValues(alpha: 0.14)
+              : AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? AppColors.accent : Colors.transparent,
+            width: 1.5,
           ),
         ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Aa',
+              style: TextStyle(
+                fontFamily: font.family,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: selected ? AppColors.accent : AppColors.inactiveLine,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              font.label,
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 9,
+                letterSpacing: 0.5,
+                color: selected ? AppColors.accent : AppColors.sectionHeader,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ShortcutGroup extends StatelessWidget {
+  final String title;
+  final List<(String, String)> rows;
+
+  const _ShortcutGroup({required this.title, required this.rows});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title.toUpperCase(),
+          style: const TextStyle(
+            fontFamily: AppTextStyles.fontFamily,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: AppColors.sectionHeader,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surfaceElevated,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            children: [
+              for (int i = 0; i < rows.length; i++) ...[
+                if (i > 0)
+                  Container(height: 1, color: AppColors.surface),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(color: AppColors.sectionHeader.withValues(alpha: 0.3), width: 1),
+                        ),
+                        child: Text(
+                          rows[i].$1,
+                          style: const TextStyle(
+                            fontFamily: AppTextStyles.fontFamily,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.inactiveLine,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          rows[i].$2,
+                          style: const TextStyle(
+                            fontFamily: AppTextStyles.fontFamily,
+                            fontSize: 12,
+                            color: AppColors.inactiveLine,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HintBox extends StatelessWidget {
+  final List<String> lines;
+  const _HintBox({required this.lines});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: lines
+            .map((l) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('·  ',
+                          style: TextStyle(
+                              color: AppColors.sectionHeader, fontSize: 11)),
+                      Expanded(
+                        child: Text(
+                          l,
+                          style: const TextStyle(
+                            fontFamily: AppTextStyles.fontFamily,
+                            fontSize: 11,
+                            color: AppColors.sectionHeader,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ))
+            .toList(),
       ),
     );
   }

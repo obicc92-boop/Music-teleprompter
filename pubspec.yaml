@@ -1,5 +1,5 @@
 name: music_teleprompter
-description: "Professional macOS teleprompter for music performance — lyrics, beat sync, vocal detection."
+description: "Professional teleprompter for music performance — lyrics, chords, beat sync. Runs on macOS, Windows, Linux, iOS, Android, and Web."
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -13,12 +13,6 @@ dependencies:
   # State management
   flutter_riverpod: ^2.6.1
 
-  # Audio capture (microphone PCM stream)
-  record: ^6.0.0
-
-  # Runtime permissions (microphone)
-  permission_handler: ^11.3.1
-
   # macOS window management (fullscreen, title bar)
   window_manager: ^0.4.3
 
@@ -31,18 +25,35 @@ dependencies:
   # Persist settings
   shared_preferences: ^2.3.3
 
-  # FFT for beat/onset detection
-  fftea: ^1.4.0
+  # Audio playback for rehearsal mode
+  just_audio: ^0.9.40
 
-  # On-device speech recognition (Apple SFSpeechRecognizer on macOS)
-  speech_to_text: ^7.0.0
+  # HTTP client for LRCLIB lyrics search
+  http: ^1.2.0
 
   cupertino_icons: ^1.0.8
+
+dependency_overrides:
+  # path_provider_android 2.3+ pulls in jni_flutter which fails to compile on Windows.
+  # Pin strictly below 2.3.0 which predates the JNI dependency.
+  path_provider_android: '>=2.2.4 <2.3.0'
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+  image: ^4.1.0
+
+flutter_launcher_icons:
+  image_path: "assets/logo/logo.png"
+  macos:
+    generate: true
+    image_path: "assets/logo/logo.png"
+  windows:
+    generate: true
+    image_path: "assets/logo/logo.png"
+    icon_size: 256
 
 flutter:
   uses-material-design: true
@@ -50,6 +61,7 @@ flutter:
   assets:
     - assets/scripts/
     - assets/fonts/
+    - assets/logo/
 
   fonts:
     - family: TeleprompterMono

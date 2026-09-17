@@ -2,11 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
-
-// Pedal action values — match AppSettings.pedalAction strings
-// 'nextSection' : PageDown = next section, PageUp = prev section
-// 'nextSong'    : PageDown = next song, PageUp = prev song
-// 'playPause'   : PageDown / Enter = play/pause toggle
+import '../utils/constants.dart';
 
 class TeleprompterKeyboardHandler extends StatefulWidget {
   final Widget child;
@@ -16,7 +12,15 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
   final VoidCallback onBack;
   final VoidCallback? onNextScript;
   final VoidCallback? onPrevScript;
+  final VoidCallback? onToggleMirror;
+  final VoidCallback? onTapTempo;
+  final VoidCallback? onPlayPauseOverride;
   final String pedalAction;
+
+  // Optional overrides for section jumps — called instead of scrollEngine directly.
+  // Use these when you need side effects (e.g. seeking audio) on section change.
+  final VoidCallback? onJumpNextSection;
+  final VoidCallback? onJumpPrevSection;
 
   const TeleprompterKeyboardHandler({
     super.key,
@@ -27,7 +31,12 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
     required this.onBack,
     this.onNextScript,
     this.onPrevScript,
+    this.onToggleMirror,
+    this.onTapTempo,
+    this.onPlayPauseOverride,
     this.pedalAction = 'nextSection',
+    this.onJumpNextSection,
+    this.onJumpPrevSection,
   });
 
   @override
@@ -51,6 +60,22 @@ class _TeleprompterKeyboardHandlerState
     super.dispose();
   }
 
+  void _jumpNext() {
+    if (widget.onJumpNextSection != null) {
+      widget.onJumpNextSection!();
+    } else {
+      widget.scrollEngine.jumpToNextSection();
+    }
+  }
+
+  void _jumpPrev() {
+    if (widget.onJumpPrevSection != null) {
+      widget.onJumpPrevSection!();
+    } else {
+      widget.scrollEngine.jumpToPrevSection();
+    }
+  }
+
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -58,100 +83,96 @@ class _TeleprompterKeyboardHandlerState
 
     final key = event.logicalKey;
 
-    // SPACE — play/pause
     if (key == LogicalKeyboardKey.space) {
-      widget.syncEngine.togglePlayPause();
+      if (widget.onPlayPauseOverride != null) {
+        widget.onPlayPauseOverride!();
+      } else {
+        widget.syncEngine.togglePlayPause();
+      }
       return KeyEventResult.handled;
     }
-
-    // UP — speed up
     if (key == LogicalKeyboardKey.arrowUp) {
-      widget.syncEngine.adjustSpeed(0.1);
+      widget.scrollEngine.scrollByLines(-1);
       return KeyEventResult.handled;
     }
-
-    // DOWN — slow down
     if (key == LogicalKeyboardKey.arrowDown) {
-      widget.syncEngine.adjustSpeed(-0.1);
+      widget.scrollEngine.scrollByLines(1);
       return KeyEventResult.handled;
     }
-
-    // RIGHT — next section
     if (key == LogicalKeyboardKey.arrowRight) {
-      widget.scrollEngine.jumpToNextSection();
+      _jumpNext();
       return KeyEventResult.handled;
     }
-
-    // LEFT — prev section
     if (key == LogicalKeyboardKey.arrowLeft) {
-      widget.scrollEngine.jumpToPrevSection();
+      _jumpPrev();
       return KeyEventResult.handled;
     }
-
-    // F — fullscreen
+    if (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.numpadAdd) {
+      widget.syncEngine.adjustSpeed(ScrollConstants.keyboardSpeedStep);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract) {
+      widget.syncEngine.adjustSpeed(-ScrollConstants.keyboardSpeedStep);
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.keyF) {
       widget.onToggleFullscreen();
       return KeyEventResult.handled;
     }
-
-    // R — reset to start
     if (key == LogicalKeyboardKey.keyR) {
       widget.scrollEngine.resetToStart();
       return KeyEventResult.handled;
     }
-
-    // L — toggle loop
     if (key == LogicalKeyboardKey.keyL) {
       widget.scrollEngine.setLoopEnabled(!widget.scrollEngine.loopEnabled);
       return KeyEventResult.handled;
     }
-
-    // N — next song in setlist
+    if (key == LogicalKeyboardKey.keyM) {
+      widget.onToggleMirror?.call();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyT) {
+      widget.onTapTempo?.call();
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.keyN) {
       widget.onNextScript?.call();
       return KeyEventResult.handled;
     }
-
-    // P — previous song in setlist
     if (key == LogicalKeyboardKey.keyP) {
       widget.onPrevScript?.call();
       return KeyEventResult.handled;
     }
-
-    // ESC — back to editor
     if (key == LogicalKeyboardKey.escape) {
       widget.onBack();
       return KeyEventResult.handled;
     }
 
-    // Foot pedal mappings (PageDown = forward, PageUp = back, Enter = alternate)
     if (key == LogicalKeyboardKey.pageDown || key == LogicalKeyboardKey.enter) {
       switch (widget.pedalAction) {
         case 'nextSection':
-          widget.scrollEngine.jumpToNextSection();
+          _jumpNext();
         case 'nextSong':
           widget.onNextScript?.call();
         case 'playPause':
-          widget.syncEngine.togglePlayPause();
+          widget.onPlayPauseOverride != null
+              ? widget.onPlayPauseOverride!()
+              : widget.syncEngine.togglePlayPause();
       }
       return KeyEventResult.handled;
     }
-
     if (key == LogicalKeyboardKey.pageUp) {
       switch (widget.pedalAction) {
         case 'nextSection':
-          widget.scrollEngine.jumpToPrevSection();
+          _jumpPrev();
         case 'nextSong':
           widget.onPrevScript?.call();
         case 'playPause':
-          widget.syncEngine.togglePlayPause();
+          widget.onPlayPauseOverride != null
+              ? widget.onPlayPauseOverride!()
+              : widget.syncEngine.togglePlayPause();
       }
       return KeyEventResult.handled;
-    }
-
-    // + / = — font size up
-    if (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.numpadAdd) {
-      return KeyEventResult.ignored; // delegated to parent
     }
 
     return KeyEventResult.ignored;

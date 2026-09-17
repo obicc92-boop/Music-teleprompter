@@ -15,7 +15,7 @@ void main() async {
     title: 'Music Teleprompter',
     backgroundColor: Color(0xFF0A0A0A),
     skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.hidden,
   );
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {

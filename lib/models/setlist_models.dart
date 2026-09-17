@@ -1,6 +1,8 @@
 String _newId() => DateTime.now().microsecondsSinceEpoch.toString();
 
 const int _defaultColor = 0xFF555555;
+const String _defaultCardFont = 'TeleprompterMono';
+const double _defaultCardFontSize = 15.0;
 
 // Sentinel for nullable copyWith fields
 const Object _unset = Object();
@@ -10,12 +12,17 @@ enum SetlistItemType { song, separator }
 class SetlistItem {
   final String id;
   final SetlistItemType type;
-  final String path;       // song only
-  final String title;      // song only
-  final int colorValue;    // song only
-  final String note;       // song only — commentary shown on card
-  final double? speedMultiplier; // song only — null means use global default
-  final String text;       // separator only
+  final String path;            // song only
+  final String title;           // song only
+  final int colorValue;         // song only
+  final String note;            // song only
+  final double? speedMultiplier; // song only — null = use global default
+  final String text;            // separator only
+
+  // Per-card display style (song only)
+  final double cardPosition;   // 0.0 = left edge, 0.5 = center, 1.0 = right edge
+  final double cardFontSize;   // title font size in px
+  final String cardFont;       // fontFamily for title
 
   const SetlistItem._({
     required this.id,
@@ -26,6 +33,9 @@ class SetlistItem {
     this.note = '',
     this.speedMultiplier,
     this.text = '',
+    this.cardPosition = 0.5,
+    this.cardFontSize = _defaultCardFontSize,
+    this.cardFont = _defaultCardFont,
   });
 
   factory SetlistItem.song({
@@ -35,6 +45,9 @@ class SetlistItem {
     int colorValue = _defaultColor,
     String note = '',
     double? speedMultiplier,
+    double cardPosition = 0.5,
+    double cardFontSize = _defaultCardFontSize,
+    String cardFont = _defaultCardFont,
   }) =>
       SetlistItem._(
         id: id ?? _newId(),
@@ -44,6 +57,9 @@ class SetlistItem {
         colorValue: colorValue,
         note: note,
         speedMultiplier: speedMultiplier,
+        cardPosition: cardPosition,
+        cardFontSize: cardFontSize,
+        cardFont: cardFont,
       );
 
   factory SetlistItem.separator({String? id, String text = ''}) =>
@@ -62,6 +78,9 @@ class SetlistItem {
     int? colorValue,
     String? note,
     String? text,
+    double? cardPosition,
+    double? cardFontSize,
+    String? cardFont,
     Object? speedMultiplier = _unset,
   }) =>
       SetlistItem._(
@@ -75,6 +94,9 @@ class SetlistItem {
             ? this.speedMultiplier
             : speedMultiplier as double?,
         text: text ?? this.text,
+        cardPosition: cardPosition ?? this.cardPosition,
+        cardFontSize: cardFontSize ?? this.cardFontSize,
+        cardFont: cardFont ?? this.cardFont,
       );
 
   Map<String, dynamic> toJson() => {
@@ -86,6 +108,9 @@ class SetlistItem {
         'note': note,
         'speedMultiplier': speedMultiplier,
         'text': text,
+        'cardPosition': cardPosition,
+        'cardFontSize': cardFontSize,
+        'cardFont': cardFont,
       };
 
   factory SetlistItem.fromJson(Map<String, dynamic> j) => SetlistItem._(
@@ -99,6 +124,9 @@ class SetlistItem {
         note: j['note'] as String? ?? '',
         speedMultiplier: (j['speedMultiplier'] as num?)?.toDouble(),
         text: j['text'] as String? ?? '',
+        cardPosition: (j['cardPosition'] as num?)?.toDouble() ?? 0.5,
+        cardFontSize: (j['cardFontSize'] as num?)?.toDouble() ?? _defaultCardFontSize,
+        cardFont: j['cardFont'] as String? ?? _defaultCardFont,
       );
 }
 

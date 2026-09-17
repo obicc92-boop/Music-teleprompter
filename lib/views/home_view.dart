@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import '../models/script.dart';
 import '../models/setlist_models.dart';
+import '../services/backup_service.dart' show BackupService, backupLocationLabel;
 import '../services/file_service.dart';
+import '../services/lrclib_service.dart';
 import '../services/script_parser.dart';
+import '../services/setlist_export_service.dart';
 import '../services/setlist_service.dart';
+import '../services/song_lrc_content_store.dart';
 import '../utils/constants.dart';
+import '../widgets/lrc_search_dialog.dart';
 
 const _palette = [
   0xFF555555,
@@ -17,6 +22,17 @@ const _palette = [
   0xFF26C6DA,
   0xFFEC407A,
   0xFF78909C,
+];
+
+// Font size steps available on each card
+const _cardFontSizes = [12.0, 15.0, 19.0, 24.0];
+
+// Font families for cards (label → family)
+const _cardFonts = [
+  ('Mono',  'TeleprompterMono'),
+  ('Inter', 'TeleprompterInter'),
+  ('Bold',  'TeleprompterOswald'),
+  ('Serif', 'TeleprompterSerif'),
 ];
 
 const String _exampleScript = '''[Intro | 4 bars]
@@ -86,11 +102,13 @@ class HomeView extends StatefulWidget {
 class _HomeViewState extends State<HomeView> {
   final _setlistService = SetlistService();
   final _fileService = FileService();
+  final _backupService = BackupService();
 
   List<Setlist> _setlists = [];
   int _activeTab = 0;
   bool _loading = true;
   bool _importing = false;
+  final Map<String, bool> _songHasLrc = {};
 
   // Inline editing state (one item at a time)
   String? _editingId;
@@ -128,6 +146,62 @@ class _HomeViewState extends State<HomeView> {
         _activeTab = _activeTab.clamp(0, (setlists.length - 1).clamp(0, 9999));
         _loading = false;
       });
+    }
+  }
+
+  // ── Import from LRCLIB ────────────────────────────────────────────────────
+
+  Future<void> _importFromLrclib() async {
+    if (_active == null) return;
+    final picked = await showDialog<Object>(
+      context: context,
+      builder: (_) => LrcSearchDialog(songTitle: ''),
+    );
+    if (picked == null || picked is! LrclibResult || !mounted) return;
+
+    final result = picked;
+
+    // Derive plain-text script content: use plainLyrics, or strip timestamps
+    final String rawLyrics;
+    if (result.plainLyrics != null && result.plainLyrics!.trim().isNotEmpty) {
+      rawLyrics = result.plainLyrics!;
+    } else {
+      // Strip LRC timestamps to get readable text
+      final tsRe = RegExp(r'\[\d+:\d+(?:\.\d+)?\]');
+      rawLyrics = result.syncedLyrics!
+          .split('\n')
+          .map((l) => l.replaceAll(tsRe, '').trim())
+          .where((l) => l.isNotEmpty)
+          .join('\n');
+    }
+
+    // Build title: "Track Name — Artist"
+    final title = result.artistName.isNotEmpty
+        ? '${result.trackName} — ${result.artistName}'
+        : result.trackName;
+
+    // Save script to library and get its path
+    final path = await _fileService.saveToLibrary(rawLyrics, title);
+
+    // Store the synced LRC content for beat-sync scrolling
+    if (result.hasSyncedLyrics) {
+      await SongLrcContentStore.saveContent(title, result.syncedLyrics!);
+    }
+
+    // Add as a new song in the active setlist
+    final item = SetlistItem.song(path: path, title: title);
+    _updateActiveItems([..._active!.items, item]);
+
+    if (mounted) {
+      setState(() => _songHasLrc[title] = result.hasSyncedLyrics);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+          '"$title" added to setlist${result.hasSyncedLyrics ? ' with synced lyrics' : ''}',
+          style: const TextStyle(fontFamily: AppTextStyles.fontFamily, fontSize: 13),
+        ),
+        backgroundColor: AppColors.surfaceElevated,
+        duration: const Duration(seconds: 3),
+      ));
     }
   }
 
@@ -170,6 +244,112 @@ class _HomeViewState extends State<HomeView> {
     if (name == null || name.trim().isEmpty) return;
     setState(() => _setlists[_activeTab] = _active!.copyWith(name: name.trim()));
     _save();
+  }
+
+  Future<void> _exportSetlist() async {
+    if (_active == null) return;
+    final path = await SetlistExportService.exportHtml(_active!);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          path != null
+              ? 'Opened in browser — use File › Print › Save as PDF'
+              : 'Export failed',
+          style: const TextStyle(fontFamily: AppTextStyles.fontFamily, fontSize: 13),
+        ),
+        backgroundColor: AppColors.surfaceElevated,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
+  Future<void> _doBackup() async {
+    final setlistsJson = _setlists.map((s) => s.toJson()).toList();
+    try {
+      final path = await _backupService.backup(setlistsJson);
+      if (!mounted) return;
+      final msg = path != null
+          ? 'Backed up to ${backupLocationLabel(path)}'
+          : 'Backup cancelled';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg,
+            style: const TextStyle(
+                fontFamily: AppTextStyles.fontFamily, fontSize: 13)),
+        backgroundColor: AppColors.surfaceElevated,
+        duration: const Duration(seconds: 4),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Backup failed: $e',
+            style: const TextStyle(
+                fontFamily: AppTextStyles.fontFamily, fontSize: 13)),
+        backgroundColor: AppColors.surfaceElevated,
+      ));
+    }
+  }
+
+  Future<void> _doRestore() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Restore from Backup',
+            style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.activeLine)),
+        content: const Text(
+          'This will overwrite your current setlists and scripts with the backup. Continue?',
+          style: TextStyle(
+              fontFamily: AppTextStyles.fontFamily,
+              fontSize: 13,
+              color: AppColors.inactiveLine,
+              height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    color: AppColors.sectionHeader)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Restore',
+                style: TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    color: AppColors.accent,
+                    fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final count = await _backupService.restore();
+      if (!mounted) return;
+      await _load();
+      messenger.showSnackBar(SnackBar(
+        content: Text('Restored $count script${count == 1 ? '' : 's'} and setlists',
+            style: const TextStyle(
+                fontFamily: AppTextStyles.fontFamily, fontSize: 13)),
+        backgroundColor: AppColors.surfaceElevated,
+        duration: const Duration(seconds: 4),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Restore failed: $e',
+            style: const TextStyle(
+                fontFamily: AppTextStyles.fontFamily, fontSize: 13)),
+        backgroundColor: AppColors.surfaceElevated,
+      ));
+    }
   }
 
   Future<void> _deleteSetlist() async {
@@ -225,12 +405,41 @@ class _HomeViewState extends State<HomeView> {
 
   Future<void> _importFile() async {
     setState(() => _importing = true);
-    final result = await _fileService.openFile();
-    setState(() => _importing = false);
-    if (result == null) return;
-    await _fileService.saveToLibrary(result.content, result.title);
-    if (!mounted) return;
-    widget.onOpenScript(ScriptParser.parse(result.content, title: result.title));
+    try {
+      final result = await _fileService.openFile();
+      if (result == null || !mounted) return;
+      final path = await _fileService.saveToLibrary(result.content, result.title);
+      if (!mounted) return;
+
+      if (_active != null) {
+        // Add to current setlist so it shows up as a card
+        final item = SetlistItem.song(path: path, title: result.title);
+        _updateActiveItems([..._active!.items, item]);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            '"${result.title}" imported and added to setlist',
+            style: const TextStyle(fontFamily: AppTextStyles.fontFamily, fontSize: 13),
+          ),
+          backgroundColor: AppColors.surfaceElevated,
+          duration: const Duration(seconds: 3),
+        ));
+      } else {
+        // No setlist yet — open in editor
+        widget.onOpenScript(ScriptParser.parse(result.content, title: result.title));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            'Import failed: $e',
+            style: const TextStyle(fontFamily: AppTextStyles.fontFamily, fontSize: 13),
+          ),
+          backgroundColor: AppColors.surfaceElevated,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
   }
 
   // ── Colour picker ─────────────────────────────────────────────────────────
@@ -365,31 +574,6 @@ class _HomeViewState extends State<HomeView> {
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 18),
       child: Row(
         children: [
-          const Icon(Icons.mic_rounded, size: 26, color: AppColors.accent),
-          const SizedBox(width: 12),
-          const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'MUSIC TELEPROMPTER',
-                style: TextStyle(
-                  fontFamily: AppTextStyles.fontFamily,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.activeLine,
-                  letterSpacing: 3,
-                ),
-              ),
-              Text(
-                'Beat-synced lyrics for live performance',
-                style: TextStyle(
-                  fontFamily: AppTextStyles.fontFamily,
-                  fontSize: 11,
-                  color: AppColors.sectionHeader,
-                ),
-              ),
-            ],
-          ),
           const Spacer(),
           _headerBtn(
             icon: Icons.music_note_rounded,
@@ -418,8 +602,8 @@ class _HomeViewState extends State<HomeView> {
 
   Widget _buildTabBar() {
     return Container(
-      color: AppColors.surface,
       decoration: const BoxDecoration(
+        color: AppColors.surface,
         border: Border(
           bottom: BorderSide(color: AppColors.surfaceElevated, width: 1),
         ),
@@ -495,6 +679,33 @@ class _HomeViewState extends State<HomeView> {
                 child: const Icon(Icons.edit_rounded,
                     size: 11, color: AppColors.dimmedLine),
               ),
+              const SizedBox(width: 5),
+              Tooltip(
+                message: 'Export as PDF (opens in browser)',
+                child: GestureDetector(
+                  onTap: _exportSetlist,
+                  child: const Icon(Icons.picture_as_pdf_rounded,
+                      size: 11, color: AppColors.dimmedLine),
+                ),
+              ),
+              const SizedBox(width: 5),
+              Tooltip(
+                message: 'Backup setlists + scripts to iCloud / local file',
+                child: GestureDetector(
+                  onTap: _doBackup,
+                  child: const Icon(Icons.cloud_upload_outlined,
+                      size: 11, color: AppColors.dimmedLine),
+                ),
+              ),
+              const SizedBox(width: 5),
+              Tooltip(
+                message: 'Restore from backup file',
+                child: GestureDetector(
+                  onTap: _doRestore,
+                  child: const Icon(Icons.cloud_download_outlined,
+                      size: 11, color: AppColors.dimmedLine),
+                ),
+              ),
               if (_setlists.length > 1) ...[
                 const SizedBox(width: 5),
                 GestureDetector(
@@ -529,6 +740,7 @@ class _HomeViewState extends State<HomeView> {
 
     return ReorderableListView.builder(
       padding: const EdgeInsets.fromLTRB(32, 12, 32, 12),
+      buildDefaultDragHandles: false,
       itemCount: active.items.length,
       onReorder: _onReorder,
       proxyDecorator: (child, idx, anim) => Material(
@@ -539,7 +751,9 @@ class _HomeViewState extends State<HomeView> {
       ),
       itemBuilder: (_, i) {
         final item = active.items[i];
-        return item.isSong ? _buildSongCard(item) : _buildSeparatorCard(item);
+        return item.isSong
+            ? _buildSongCard(item, i)
+            : _buildSeparatorCard(item, i);
       },
     );
   }
@@ -583,214 +797,28 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  Widget _buildSongCard(SetlistItem item) {
-    final accent = Color(item.colorValue);
-    final isEditing = _editingId == item.id;
-
-    return Padding(
+  Widget _buildSongCard(SetlistItem item, int index) {
+    return _SongCardRow(
       key: ValueKey(item.id),
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.surfaceElevated),
-          ),
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Left accent bar
-                Container(
-                  width: 4,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(10),
-                      bottomLeft: Radius.circular(10),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-
-                // Colour dot
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  child: Tooltip(
-                    message: 'Change colour',
-                    child: GestureDetector(
-                      onTap: () => _pickColor(item),
-                      child: Container(
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          color: accent,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.15),
-                            width: 1.5,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-
-                // Title + note — tap to launch (or commit edit)
-                Expanded(
-                  child: InkWell(
-                    onTap: () {
-                      if (_editingId != null) {
-                        _commitEdit();
-                        return;
-                      }
-                      _launchItem(item);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            item.title,
-                            style: const TextStyle(
-                              fontFamily: AppTextStyles.fontFamily,
-                              fontSize: 15,
-                              color: AppColors.activeLine,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          isEditing
-                              ? TextField(
-                                  controller: _editCtrl,
-                                  focusNode: _editFocus,
-                                  style: const TextStyle(
-                                    fontFamily: AppTextStyles.fontFamily,
-                                    fontSize: 12,
-                                    color: AppColors.inactiveLine,
-                                  ),
-                                  decoration: const InputDecoration(
-                                    hintText: 'Add a note...',
-                                    hintStyle: TextStyle(
-                                      fontFamily: AppTextStyles.fontFamily,
-                                      fontSize: 12,
-                                      color: AppColors.dimmedLine,
-                                    ),
-                                    isDense: true,
-                                    border: InputBorder.none,
-                                    contentPadding: EdgeInsets.zero,
-                                  ),
-                                  onSubmitted: (_) => _commitEdit(),
-                                )
-                              : GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () => _beginEdit(item),
-                                  child: Text(
-                                    item.note.isEmpty
-                                        ? 'Add note...'
-                                        : item.note,
-                                    style: TextStyle(
-                                      fontFamily: AppTextStyles.fontFamily,
-                                      fontSize: 12,
-                                      color: item.note.isEmpty
-                                          ? AppColors.dimmedLine
-                                          : AppColors.sectionHeader,
-                                      fontStyle: item.note.isEmpty
-                                          ? FontStyle.italic
-                                          : FontStyle.normal,
-                                    ),
-                                  ),
-                                ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // Edit button
-                Tooltip(
-                  message: 'Open in editor',
-                  child: InkWell(
-                    onTap: () => _editItem(item),
-                    borderRadius: BorderRadius.circular(6),
-                    child: const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: Icon(Icons.edit_rounded,
-                          size: 17, color: AppColors.sectionHeader),
-                    ),
-                  ),
-                ),
-
-                // Delete button
-                Tooltip(
-                  message: 'Remove from setlist',
-                  child: InkWell(
-                    onTap: () => _deleteItem(item),
-                    borderRadius: BorderRadius.circular(6),
-                    child: const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: Icon(Icons.delete_outline_rounded,
-                          size: 17, color: AppColors.sectionHeader),
-                    ),
-                  ),
-                ),
-
-                // Speed chip
-                Tooltip(
-                  message: item.speedMultiplier == null
-                      ? 'Set song speed (using global default)'
-                      : 'Song speed: ${item.speedMultiplier!.toStringAsFixed(2)}×  —  tap to change',
-                  child: InkWell(
-                    onTap: () => _pickSpeed(item),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 10),
-                      child: Text(
-                        item.speedMultiplier == null
-                            ? '⚡'
-                            : '${item.speedMultiplier!.toStringAsFixed(2)}×',
-                        style: TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
-                          fontSize: 11,
-                          color: item.speedMultiplier == null
-                              ? AppColors.dimmedLine
-                              : AppColors.accent,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-
-                const SizedBox(width: 4),
-
-                // LAUNCH button
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: _launchButton(accent, () => _launchItem(item)),
-                ),
-
-                // Drag handle
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Icon(Icons.drag_indicator_rounded,
-                      size: 20, color: AppColors.dimmedLine),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      item: item,
+      index: index,
+      isEditing: _editingId == item.id,
+      editCtrl: _editCtrl,
+      editFocus: _editFocus,
+      onLaunch: () => _launchItem(item),
+      onEdit: () => _editItem(item),
+      onDelete: () => _deleteItem(item),
+      onPickColor: () => _pickColor(item),
+      onPickSpeed: () => _pickSpeed(item),
+      onBeginEdit: () => _beginEdit(item),
+      onCommitEdit: _commitEdit,
+      onPositionChanged: (p) => _replaceItem(item.copyWith(cardPosition: p)),
+      onFontSizeChanged: (s) => _replaceItem(item.copyWith(cardFontSize: s)),
+      onFontChanged: (f) => _replaceItem(item.copyWith(cardFont: f)),
     );
   }
 
-  Widget _buildSeparatorCard(SetlistItem item) {
+  Widget _buildSeparatorCard(SetlistItem item, int index) {
     final isEditing = _editingId == item.id;
 
     return Padding(
@@ -810,8 +838,6 @@ class _HomeViewState extends State<HomeView> {
             const Icon(Icons.notes_rounded,
                 size: 14, color: AppColors.dimmedLine),
             const SizedBox(width: 12),
-
-            // Separator text — editable
             Expanded(
               child: isEditing
                   ? TextField(
@@ -839,9 +865,7 @@ class _HomeViewState extends State<HomeView> {
                       behavior: HitTestBehavior.opaque,
                       onTap: () => _beginEdit(item),
                       child: Text(
-                        item.text.isEmpty
-                            ? 'Tap to add a stage note...'
-                            : item.text,
+                        item.text.isEmpty ? 'Tap to add a stage note...' : item.text,
                         style: TextStyle(
                           fontFamily: AppTextStyles.fontFamily,
                           fontSize: 13,
@@ -855,60 +879,29 @@ class _HomeViewState extends State<HomeView> {
                       ),
                     ),
             ),
-
             InkWell(
               onTap: () => _deleteItem(item),
               borderRadius: BorderRadius.circular(6),
               child: const Padding(
                 padding: EdgeInsets.all(6),
-                child: Icon(Icons.close_rounded,
-                    size: 14, color: AppColors.dimmedLine),
+                child: Icon(Icons.close_rounded, size: 14, color: AppColors.dimmedLine),
               ),
             ),
-
             const SizedBox(width: 4),
-
-            Icon(Icons.drag_indicator_rounded,
-                size: 18, color: AppColors.dimmedLine),
+            ReorderableDragStartListener(
+              index: index,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Icon(Icons.drag_indicator_rounded,
+                    size: 18, color: AppColors.dimmedLine),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _launchButton(Color accent, VoidCallback onTap) {
-    return Tooltip(
-      message: 'Launch teleprompter',
-      child: Material(
-        color: accent,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.play_arrow_rounded, size: 17, color: Colors.black),
-                SizedBox(width: 4),
-                Text(
-                  'LAUNCH',
-                  style: TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black,
-                    letterSpacing: 1,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildFooter() {
     return Container(
@@ -933,9 +926,15 @@ class _HomeViewState extends State<HomeView> {
             label: 'Add Separator',
             onTap: _addSeparator,
           ),
+          const SizedBox(width: 10),
+          _footerBtn(
+            icon: Icons.search_rounded,
+            label: 'Search Lyrics',
+            onTap: _active != null ? _importFromLrclib : () {},
+          ),
           const Spacer(),
           const Text(
-            'SPACE  play/pause  ·  ↑↓  speed  ·  ←→  jump section  ·  F  fullscreen  ·  N  next  ·  P  prev',
+            'SPACE  play/pause  ·  ↑↓  scroll  ·  +−  speed  ·  ←→  jump section  ·  F  fullscreen  ·  N  next  ·  P  prev',
             style: TextStyle(
               fontFamily: AppTextStyles.fontFamily,
               fontSize: 10,
@@ -1107,6 +1106,415 @@ class _HomeViewState extends State<HomeView> {
       ),
     );
     return result ?? false;
+  }
+}
+
+// ── Song card row (horizontally draggable, per-card style) ───────────────────
+
+class _SongCardRow extends StatefulWidget {
+  final SetlistItem item;
+  final int index;
+  final bool isEditing;
+  final TextEditingController editCtrl;
+  final FocusNode editFocus;
+  final VoidCallback onLaunch;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback onPickColor;
+  final VoidCallback onPickSpeed;
+  final VoidCallback onBeginEdit;
+  final VoidCallback onCommitEdit;
+  final ValueChanged<double> onPositionChanged;
+  final ValueChanged<double> onFontSizeChanged;
+  final ValueChanged<String> onFontChanged;
+
+  const _SongCardRow({
+    super.key,
+    required this.item,
+    required this.index,
+    required this.isEditing,
+    required this.editCtrl,
+    required this.editFocus,
+    required this.onLaunch,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onPickColor,
+    required this.onPickSpeed,
+    required this.onBeginEdit,
+    required this.onCommitEdit,
+    required this.onPositionChanged,
+    required this.onFontSizeChanged,
+    required this.onFontChanged,
+  });
+
+  @override
+  State<_SongCardRow> createState() => _SongCardRowState();
+}
+
+class _SongCardRowState extends State<_SongCardRow> {
+  // Local position in pixels — drives rendering during drag; committed on drag end.
+  double? _localShift;
+
+  void _onDragStart(DragStartDetails d, double maxShift) {
+    _localShift = widget.item.cardPosition.clamp(0.0, 1.0) * maxShift;
+  }
+
+  void _onDragUpdate(DragUpdateDetails d, double maxShift) {
+    setState(() {
+      _localShift = ((_localShift ?? 0) + d.delta.dx).clamp(0.0, maxShift);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails d, double maxShift) {
+    if (_localShift != null && maxShift > 0) {
+      widget.onPositionChanged(_localShift! / maxShift);
+    }
+    setState(() => _localShift = null);
+  }
+
+  void _cycleFont() {
+    final families = _cardFonts.map((f) => f.$2).toList();
+    final idx = families.indexOf(widget.item.cardFont);
+    final next = families[(idx + 1) % families.length];
+    widget.onFontChanged(next);
+  }
+
+  void _cycleFontSize() {
+    final idx = _cardFontSizes.indexWhere((s) => (s - widget.item.cardFontSize).abs() < 0.5);
+    final next = _cardFontSizes[(idx + 1) % _cardFontSizes.length];
+    widget.onFontSizeChanged(next);
+  }
+
+  String _fontLabel(String family) =>
+      _cardFonts.firstWhere((f) => f.$2 == family, orElse: () => _cardFonts.first).$1;
+
+  String _fontSizeLabel(double size) {
+    if (size <= 12) return 'S';
+    if (size <= 15) return 'M';
+    if (size <= 19) return 'L';
+    return 'XL';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final accent = Color(item.colorValue);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const cardFraction = 0.74;
+          final fullW = constraints.maxWidth;
+          final gripW = 36.0;
+          final availW = fullW - gripW;
+          final cardW = availW * cardFraction;
+          final maxShift = availW - cardW;
+          final shift = (_localShift ?? item.cardPosition.clamp(0.0, 1.0) * maxShift)
+              .clamp(0.0, maxShift);
+
+          return Row(
+            children: [
+              // ── Left spacer ────────────────────────────────────────────────
+              SizedBox(width: shift),
+
+              // ── Positionable card ──────────────────────────────────────────
+              SizedBox(
+                width: cardW,
+                child: GestureDetector(
+                  onHorizontalDragStart: (d) => _onDragStart(d, maxShift),
+                  onHorizontalDragUpdate: (d) => _onDragUpdate(d, maxShift),
+                  onHorizontalDragEnd: (d) => _onDragEnd(d, maxShift),
+                  child: Material(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.surfaceElevated),
+                            ),
+                            child: IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // Left accent bar
+                                  Container(
+                                    width: 4,
+                                    decoration: BoxDecoration(
+                                      color: accent,
+                                      borderRadius: const BorderRadius.only(
+                                        topLeft: Radius.circular(10),
+                                        bottomLeft: Radius.circular(10),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+
+                                  // Colour dot
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    child: Tooltip(
+                                      message: 'Change colour',
+                                      child: GestureDetector(
+                                        onTap: widget.onPickColor,
+                                        child: Container(
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                            color: accent,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: Colors.white.withValues(alpha: 0.15),
+                                              width: 1.5,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+
+                                  // Title + note
+                                  Expanded(
+                                    child: InkWell(
+                                      onTap: () {
+                                        if (widget.isEditing) {
+                                          widget.onCommitEdit();
+                                          return;
+                                        }
+                                        widget.onLaunch();
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 10),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              item.title,
+                                              style: TextStyle(
+                                                fontFamily: item.cardFont,
+                                                fontSize: item.cardFontSize,
+                                                color: AppColors.activeLine,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            widget.isEditing
+                                                ? TextField(
+                                                    controller: widget.editCtrl,
+                                                    focusNode: widget.editFocus,
+                                                    style: const TextStyle(
+                                                      fontFamily: AppTextStyles.fontFamily,
+                                                      fontSize: 12,
+                                                      color: AppColors.inactiveLine,
+                                                    ),
+                                                    decoration: const InputDecoration(
+                                                      hintText: 'Add a note...',
+                                                      hintStyle: TextStyle(
+                                                        fontFamily: AppTextStyles.fontFamily,
+                                                        fontSize: 12,
+                                                        color: AppColors.dimmedLine,
+                                                      ),
+                                                      isDense: true,
+                                                      border: InputBorder.none,
+                                                      contentPadding: EdgeInsets.zero,
+                                                    ),
+                                                    onSubmitted: (_) => widget.onCommitEdit(),
+                                                  )
+                                                : GestureDetector(
+                                                    behavior: HitTestBehavior.opaque,
+                                                    onTap: widget.onBeginEdit,
+                                                    child: Text(
+                                                      item.note.isEmpty
+                                                          ? 'Add note...'
+                                                          : item.note,
+                                                      style: TextStyle(
+                                                        fontFamily: AppTextStyles.fontFamily,
+                                                        fontSize: 12,
+                                                        color: item.note.isEmpty
+                                                            ? AppColors.dimmedLine
+                                                            : AppColors.sectionHeader,
+                                                        fontStyle: item.note.isEmpty
+                                                            ? FontStyle.italic
+                                                            : FontStyle.normal,
+                                                      ),
+                                                    ),
+                                                  ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  // Font size cycle
+                                  Tooltip(
+                                    message: 'Font size: ${item.cardFontSize.round()}px — tap to cycle',
+                                    child: InkWell(
+                                      onTap: _cycleFontSize,
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 7, vertical: 10),
+                                        child: Text(
+                                          _fontSizeLabel(item.cardFontSize),
+                                          style: const TextStyle(
+                                            fontFamily: AppTextStyles.fontFamily,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.sectionHeader,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  // Font family cycle
+                                  Tooltip(
+                                    message: 'Font: ${_fontLabel(item.cardFont)} — tap to cycle',
+                                    child: InkWell(
+                                      onTap: _cycleFont,
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 7, vertical: 10),
+                                        child: Text(
+                                          _fontLabel(item.cardFont),
+                                          style: TextStyle(
+                                            fontFamily: item.cardFont,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.sectionHeader,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  // Edit in editor
+                                  Tooltip(
+                                    message: 'Open in editor',
+                                    child: InkWell(
+                                      onTap: widget.onEdit,
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: const Padding(
+                                        padding: EdgeInsets.all(10),
+                                        child: Icon(Icons.edit_rounded,
+                                            size: 16, color: AppColors.sectionHeader),
+                                      ),
+                                    ),
+                                  ),
+
+                                  // Delete
+                                  Tooltip(
+                                    message: 'Remove from setlist',
+                                    child: InkWell(
+                                      onTap: widget.onDelete,
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: const Padding(
+                                        padding: EdgeInsets.all(10),
+                                        child: Icon(Icons.delete_outline_rounded,
+                                            size: 16, color: AppColors.sectionHeader),
+                                      ),
+                                    ),
+                                  ),
+
+                                  // Speed chip
+                                  Tooltip(
+                                    message: item.speedMultiplier == null
+                                        ? 'Set song speed (using global default)'
+                                        : 'Speed: ${item.speedMultiplier!.toStringAsFixed(2)}×  — tap to change',
+                                    child: InkWell(
+                                      onTap: widget.onPickSpeed,
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 7, vertical: 10),
+                                        child: Text(
+                                          item.speedMultiplier == null
+                                              ? '⚡'
+                                              : '${item.speedMultiplier!.toStringAsFixed(2)}×',
+                                          style: TextStyle(
+                                            fontFamily: AppTextStyles.fontFamily,
+                                            fontSize: 11,
+                                            color: item.speedMultiplier == null
+                                                ? AppColors.dimmedLine
+                                                : AppColors.accent,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  const SizedBox(width: 4),
+
+                                  // LAUNCH button
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    child: Tooltip(
+                                      message: 'Launch teleprompter',
+                                      child: Material(
+                                        color: accent,
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: InkWell(
+                                          onTap: widget.onLaunch,
+                                          borderRadius: BorderRadius.circular(8),
+                                          child: const Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                horizontal: 12, vertical: 8),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.play_arrow_rounded,
+                                                    size: 16, color: Colors.black),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  'LAUNCH',
+                                                  style: TextStyle(
+                                                    fontFamily: AppTextStyles.fontFamily,
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: Colors.black,
+                                                    letterSpacing: 1,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+              // fill remaining space so grip stays at far right
+              const Spacer(),
+
+              // ── Vertical reorder grip (always at far right) ────────────────
+              ReorderableDragStartListener(
+                index: widget.index,
+                child: SizedBox(
+                  width: gripW,
+                  child: const Center(
+                    child: Icon(Icons.drag_indicator_rounded,
+                        size: 20, color: AppColors.dimmedLine),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 }
 

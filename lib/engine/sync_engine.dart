@@ -1,186 +1,59 @@
-import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:record/record.dart' show InputDevice;
-import 'audio_engine.dart';
-import 'beat_detector.dart';
-import 'voice_detection_layer.dart';
-import 'voice_profiler.dart';
 import '../utils/constants.dart';
 
 enum PlayState { stopped, playing, paused }
 
 class SyncEngineState {
-  final double bpm;
-  final bool isVoiceActive;
-  final double voiceEnergy;
   final double scrollSpeed;
   final double manualMultiplier;
   final PlayState playState;
-  final AudioEngineState audioState;
 
   const SyncEngineState({
-    this.bpm = AudioConstants.defaultBpm,
-    this.isVoiceActive = false,
-    this.voiceEnergy = 0.0,
     this.scrollSpeed = 0.0,
     this.manualMultiplier = ScrollConstants.defaultSpeedMultiplier,
     this.playState = PlayState.stopped,
-    this.audioState = AudioEngineState.idle,
   });
 
   SyncEngineState copyWith({
-    double? bpm,
-    bool? isVoiceActive,
-    double? voiceEnergy,
     double? scrollSpeed,
     double? manualMultiplier,
     PlayState? playState,
-    AudioEngineState? audioState,
-  }) {
-    return SyncEngineState(
-      bpm: bpm ?? this.bpm,
-      isVoiceActive: isVoiceActive ?? this.isVoiceActive,
-      voiceEnergy: voiceEnergy ?? this.voiceEnergy,
-      scrollSpeed: scrollSpeed ?? this.scrollSpeed,
-      manualMultiplier: manualMultiplier ?? this.manualMultiplier,
-      playState: playState ?? this.playState,
-      audioState: audioState ?? this.audioState,
-    );
-  }
+  }) =>
+      SyncEngineState(
+        scrollSpeed: scrollSpeed ?? this.scrollSpeed,
+        manualMultiplier: manualMultiplier ?? this.manualMultiplier,
+        playState: playState ?? this.playState,
+      );
 }
 
 class SyncEngine extends ChangeNotifier {
-  final AudioEngine _audioEngine;
-
   SyncEngineState _state = const SyncEngineState();
-  StreamSubscription<BeatEvent>? _beatSub;
-  StreamSubscription<VoiceState>? _voiceSub;
-  StreamSubscription<AudioEngineState>? _audioStateSub;
-
-  double _smoothedScrollSpeed = 0.0;
-  bool _useManualBpm = false;
-  double _manualBpm = AudioConstants.defaultBpm;
-  bool _autoScrollOnVoice = true;
-  bool _voiceWordSync = false;
-  VoiceProfiler? _voiceProfiler;
-
-  final StreamController<void> _onsetController =
-      StreamController<void>.broadcast();
 
   SyncEngineState get state => _state;
   PlayState get playState => _state.playState;
-  double get bpm => _state.bpm;
-  bool get isVoiceActive => _state.isVoiceActive;
-  double get scrollSpeed => _state.scrollSpeed;
   bool get isPlaying => _state.playState == PlayState.playing;
+  double get scrollSpeed => _state.scrollSpeed;
 
-  Stream<BeatEvent> get beatStream => _audioEngine.beatStream;
-  Stream<void> get onsetStream => _onsetController.stream;
-  Stream<Uint8List> get rawAudioStream => _audioEngine.rawAudioStream;
-
-  Future<List<InputDevice>> listInputDevices() => _audioEngine.listInputDevices();
-
-  /// Switch to a different input device. Restarts the audio stream live if playing.
-  Future<void> setDevice(String? deviceId) async {
-    await _audioEngine.setDeviceId(deviceId);
-    if (_audioEngine.isRunning) {
-      await _audioEngine.stop();
-      await _audioEngine.start();
-    }
-  }
-
-  SyncEngine({required AudioEngine audioEngine}) : _audioEngine = audioEngine {
-    _wireStreams();
-  }
-
-  void _wireStreams() {
-    _audioStateSub = _audioEngine.stateStream.listen((s) {
-      _updateState(_state.copyWith(audioState: s));
-    });
-    _beatSub = _audioEngine.beatStream.listen(_onBeat);
-    _voiceSub = _audioEngine.voiceStream.listen(_onVoice);
-  }
-
-  void _onBeat(BeatEvent event) {
-    if (_useManualBpm) return;
-    _updateState(_state.copyWith(bpm: event.estimatedBpm));
-  }
-
-  void _onVoice(VoiceState voiceState) {
-    final isActive = (_voiceProfiler?.hasProfile ?? false)
-        ? (_voiceProfiler!.isVoiceMatch && voiceState.isActive)
-        : voiceState.isActive;
-    _updateState(_state.copyWith(
-      isVoiceActive: isActive,
-      voiceEnergy: voiceState.smoothedEnergy,
-    ));
-    if (isActive && voiceState.hasOnset) {
-      _onsetController.add(null);
-    }
-  }
-
-  void setVoiceProfiler(VoiceProfiler? profiler) {
-    _voiceProfiler = profiler;
-    _audioEngine.voiceProfiler = profiler;
-  }
-
-  /// Called every frame by ScrollEngine. Computes target fresh from current
-  /// state and smooths toward it — single smoothing pass, no stale targets.
+  /// Called every frame by ScrollEngine. Returns pixels to advance this frame.
   double tickScrollSpeed(double dt) {
-    if (_state.playState != PlayState.playing) {
-      _smoothedScrollSpeed = 0.0;
-      return 0.0;
-    }
-
-    final effectiveBpm = _useManualBpm ? _manualBpm : _state.bpm;
-    final bpmFactor = effectiveBpm / AudioConstants.defaultBpm;
-
-    double voiceFactor;
-    if (_voiceWordSync) {
-      // Word sync drives scroll via onset events; auto-scroll stays near-zero
-      voiceFactor = 0.0;
-    } else if (_autoScrollOnVoice) {
-      voiceFactor = _state.isVoiceActive
-          ? ScrollConstants.voiceSpeedBoost
-          : ScrollConstants.silenceSpeedReduction;
-    } else {
-      voiceFactor = 1.0;
-    }
-
-    final target = ScrollConstants.pixelsPerSecondBase *
-        bpmFactor *
-        voiceFactor *
-        _state.manualMultiplier;
-
-    _smoothedScrollSpeed +=
-        (target - _smoothedScrollSpeed) * ScrollConstants.speedSmoothingFactor;
-
-    _updateState(_state.copyWith(scrollSpeed: _smoothedScrollSpeed));
-    return _smoothedScrollSpeed * dt;
+    if (_state.playState != PlayState.playing) return 0.0;
+    final speed = ScrollConstants.pixelsPerSecondBase * _state.manualMultiplier;
+    _updateState(_state.copyWith(scrollSpeed: speed));
+    return speed * dt;
   }
 
   Future<void> play() async {
     if (_state.playState == PlayState.playing) return;
     _updateState(_state.copyWith(playState: PlayState.playing));
-    await _audioEngine.start();
   }
 
   Future<void> pause() async {
     if (_state.playState != PlayState.playing) return;
-    _smoothedScrollSpeed = 0.0;
-    _updateState(_state.copyWith(
-      playState: PlayState.paused,
-      scrollSpeed: 0.0,
-    ));
+    _updateState(_state.copyWith(playState: PlayState.paused, scrollSpeed: 0.0));
   }
 
   Future<void> stop() async {
-    _smoothedScrollSpeed = 0.0;
-    _updateState(_state.copyWith(
-      playState: PlayState.stopped,
-      scrollSpeed: 0.0,
-    ));
-    await _audioEngine.stop();
+    _updateState(_state.copyWith(playState: PlayState.stopped, scrollSpeed: 0.0));
   }
 
   Future<void> togglePlayPause() async {
@@ -204,39 +77,9 @@ class SyncEngine extends ChangeNotifier {
     setManualMultiplier(_state.manualMultiplier + delta);
   }
 
-  void setManualBpm(double bpm) {
-    _manualBpm = bpm.clamp(AudioConstants.minBpm, AudioConstants.maxBpm);
-  }
-
-  void setUseManualBpm(bool value) {
-    _useManualBpm = value;
-    if (value) _updateState(_state.copyWith(bpm: _manualBpm));
-  }
-
-  void setAutoScrollOnVoice(bool value) {
-    _autoScrollOnVoice = value;
-  }
-
-  void setVoiceWordSync(bool value) {
-    _voiceWordSync = value;
-  }
-
-  void updateVoiceSensitivity(double threshold) {
-    _audioEngine.updateVoiceSensitivity(threshold);
-  }
-
   void _updateState(SyncEngineState newState) {
     _state = newState;
     notifyListeners();
   }
 
-  @override
-  Future<void> dispose() async {
-    await _beatSub?.cancel();
-    await _voiceSub?.cancel();
-    await _audioStateSub?.cancel();
-    await _onsetController.close();
-    await _audioEngine.dispose();
-    super.dispose();
-  }
 }

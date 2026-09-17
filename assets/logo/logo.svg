@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Music Teleprompter — App Icon
+  1024 × 1024 master. Export to PNG at 1024, 512, 256, 128, 64, 32, 16 for platform icons.
+  Brand colours: background #141414, accent #FF6B35, inactive #2E2E2E
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+
+  <!-- ── Background ── -->
+  <rect width="1024" height="1024" rx="224" fill="#141414"/>
+
+  <!-- Subtle top-edge highlight for depth -->
+  <rect x="0" y="0" width="1024" height="3" rx="1.5" fill="#FFFFFF" opacity="0.04"/>
+
+  <!-- ── Lyric lines ── -->
+
+  <!-- Line 1 (inactive) -->
+  <rect x="148" y="236" width="596" height="52" rx="26" fill="#2A2A2A"/>
+
+  <!-- Line 2 (inactive) -->
+  <rect x="148" y="342" width="668" height="52" rx="26" fill="#2A2A2A"/>
+
+  <!-- Line 3 — ACTIVE (orange + play cursor) -->
+  <!-- Play triangle cursor -->
+  <polygon points="148,443  148,557  248,500" fill="#FF6B35"/>
+  <!-- Active lyric bar -->
+  <rect x="272" y="448" width="604" height="104" rx="52" fill="#FF6B35"/>
+  <!-- Soft glow behind active line -->
+  <rect x="148" y="432" width="728" height="136" rx="68" fill="#FF6B35" opacity="0.12"/>
+
+  <!-- Line 4 (inactive) -->
+  <rect x="148" y="662" width="638" height="52" rx="26" fill="#2A2A2A"/>
+
+  <!-- Line 5 (inactive, shorter — natural lyric rhythm) -->
+  <rect x="148" y="768" width="468" height="52" rx="26" fill="#2A2A2A"/>
+
+  <!-- ── Subtle music note cluster (top-right, low opacity) ── -->
+  <g opacity="0.18" fill="#FFFFFF">
+    <!-- Note 1 notehead -->
+    <ellipse cx="756" cy="196" rx="44" ry="32" transform="rotate(-15,756,196)"/>
+    <!-- Note 1 stem -->
+    <rect x="793" y="96" width="14" height="108" rx="7"/>
+    <!-- Note 2 notehead -->
+    <ellipse cx="856" cy="168" rx="44" ry="32" transform="rotate(-15,856,168)"/>
+    <!-- Note 2 stem -->
+    <rect x="893" y="68" width="14" height="108" rx="7"/>
+    <!-- Beam connecting stems -->
+    <rect x="793" y="92" width="114" height="18" rx="9" transform="rotate(-14,793,92)"/>
+  </g>
+
+</svg>

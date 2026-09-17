@@ -92,20 +92,25 @@ class _FormatOverlayState extends State<FormatOverlay> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.background.withValues(alpha: 0.96),
-      child: Column(
-        children: [
-          _buildHeader(),
-          Expanded(child: _buildScriptList()),
-          _buildToolbar(),
-        ],
+      color: AppColors.surface,
+      child: Container(
+        decoration: const BoxDecoration(
+          border: Border(left: BorderSide(color: AppColors.surfaceElevated)),
+        ),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(child: _buildScriptList()),
+            _buildToolbar(),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: AppColors.surfaceElevated)),
       ),
@@ -115,7 +120,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
             'FORMAT LYRICS',
             style: TextStyle(
               fontFamily: AppTextStyles.fontFamily,
-              fontSize: 13,
+              fontSize: 11,
               color: AppColors.activeLine,
               letterSpacing: 2,
               fontWeight: FontWeight.w700,
@@ -129,7 +134,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
               style: TextStyle(
                 fontFamily: AppTextStyles.fontFamily,
                 color: AppColors.accent,
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
             ),
