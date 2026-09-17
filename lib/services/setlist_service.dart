@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import '../models/setlist_models.dart';
+import 'song_settings_store.dart';
 
 class SetlistService {
   Future<Directory> _dir() async {
@@ -16,12 +17,13 @@ class SetlistService {
     final file = File('${dir.path}/setlists.json');
 
     if (await file.exists()) {
+      var list = <Setlist>[];
       try {
         final raw = jsonDecode(await file.readAsString()) as List<dynamic>;
-        final list =
+        list =
             raw.map((j) => Setlist.fromJson(j as Map<String, dynamic>)).toList();
-        if (list.isNotEmpty) return list;
       } catch (_) {}
+      if (list.isNotEmpty) return _moveCardSpeedsToSongs(list);
     }
 
     // Migrate from legacy _setlist.json
@@ -42,6 +44,36 @@ class SetlistService {
     final file = File('${dir.path}/setlists.json');
     await file
         .writeAsString(jsonEncode(setlists.map((s) => s.toJson()).toList()));
+  }
+
+  /// Speed used to be set per setlist card; it now belongs to the song, so it
+  /// follows the song into every setlist. A song's own speed wins over a card's.
+  Future<List<Setlist>> _moveCardSpeedsToSongs(List<Setlist> setlists) async {
+    if (!setlists.any((s) => s.items.any((i) => i.speedMultiplier != null))) {
+      return setlists;
+    }
+    try {
+      final moved = <Setlist>[];
+      for (final setlist in setlists) {
+        final items = <SetlistItem>[];
+        for (final item in setlist.items) {
+          final speed = item.speedMultiplier;
+          if (speed != null) {
+            final song = await SongSettingsStore.getSettings(item.title);
+            if (song.scrollSpeedMultiplier == null) {
+              await SongSettingsStore.saveSettings(
+                  item.title, song.withSpeed(speed));
+            }
+          }
+          items.add(item.copyWith(speedMultiplier: null));
+        }
+        moved.add(setlist.copyWith(items: items));
+      }
+      await save(moved);
+      return moved;
+    } catch (_) {
+      return setlists;
+    }
   }
 
   Future<List<({String title, String path})>> librarySongs() async {

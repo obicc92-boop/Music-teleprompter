@@ -209,6 +209,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
     super.didUpdateWidget(oldWidget);
     if (widget.settings != oldWidget.settings) {
       setState(() => _settings = widget.settings);
+      _scrollEngine.setLineHeight(_effectiveLineHeight);
       _syncEndReachedCallback();
     }
     if (widget.script != oldWidget.script) {

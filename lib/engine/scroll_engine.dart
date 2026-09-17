@@ -58,8 +58,13 @@ class ScrollEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Changes the line height (e.g. a new font size) without losing the
+  /// reading position.
   void setLineHeight(double height) {
+    if (height == _lineHeight) return;
+    _pixelOffset = _pixelOffset / _lineHeight * height;
     _lineHeight = height;
+    notifyListeners();
   }
 
   void _onTick(Duration elapsed) {

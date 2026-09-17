@@ -8,6 +8,7 @@ import '../services/script_parser.dart';
 import '../services/setlist_export_service.dart';
 import '../services/setlist_service.dart';
 import '../services/song_lrc_content_store.dart';
+import '../services/song_settings_store.dart';
 import '../utils/constants.dart';
 import '../widgets/lrc_search_dialog.dart';
 
@@ -87,12 +88,14 @@ class HomeView extends StatefulWidget {
   final void Function(Script) onOpenScript;
   final void Function(Script, List<SetlistEntry>, int) onLaunchScript;
   final void Function(Script, List<SetlistEntry>, int) onOpenScriptWithSetlist;
+  final VoidCallback onOpenSettings;
 
   const HomeView({
     super.key,
     required this.onOpenScript,
     required this.onLaunchScript,
     required this.onOpenScriptWithSetlist,
+    required this.onOpenSettings,
   });
 
   @override
@@ -109,6 +112,7 @@ class _HomeViewState extends State<HomeView> {
   bool _loading = true;
   bool _importing = false;
   final Map<String, bool> _songHasLrc = {};
+  Map<String, double> _songSpeeds = {}; // song title → its own speed
 
   // Inline editing state (one item at a time)
   String? _editingId;
@@ -146,7 +150,20 @@ class _HomeViewState extends State<HomeView> {
         _activeTab = _activeTab.clamp(0, (setlists.length - 1).clamp(0, 9999));
         _loading = false;
       });
+      _loadSongSpeeds();
     }
+  }
+
+  Future<void> _loadSongSpeeds() async {
+    final speeds = <String, double>{};
+    for (final setlist in _setlists) {
+      for (final item in setlist.items.where((i) => i.isSong)) {
+        final speed =
+            (await SongSettingsStore.getSettings(item.title)).scrollSpeedMultiplier;
+        if (speed != null) speeds[item.title] = speed;
+      }
+    }
+    if (mounted) setState(() => _songSpeeds = speeds);
   }
 
   // ── Import from LRCLIB ────────────────────────────────────────────────────
@@ -211,6 +228,7 @@ class _HomeViewState extends State<HomeView> {
     if (_active == null) return;
     setState(() => _setlists[_activeTab] = _active!.copyWith(items: items));
     _save();
+    _loadSongSpeeds(); // an added song may already have its own speed
   }
 
   void _replaceItem(SetlistItem replacement) {
@@ -455,13 +473,16 @@ class _HomeViewState extends State<HomeView> {
 
   // ── Speed ─────────────────────────────────────────────────────────────────
 
+  // Speed belongs to the song, so it applies in every setlist it appears in.
   Future<void> _pickSpeed(SetlistItem item) async {
     final result = await showDialog<_SpeedResult>(
       context: context,
-      builder: (_) => _SpeedPickerDialog(current: item.speedMultiplier),
+      builder: (_) => _SpeedPickerDialog(current: _songSpeeds[item.title]),
     );
     if (result == null) return; // cancelled
-    _replaceItem(item.copyWith(speedMultiplier: result.speed));
+    final song = await SongSettingsStore.getSettings(item.title);
+    await SongSettingsStore.saveSettings(item.title, song.withSpeed(result.speed));
+    _loadSongSpeeds();
   }
 
   // ── Delete ────────────────────────────────────────────────────────────────
@@ -528,13 +549,8 @@ class _HomeViewState extends State<HomeView> {
       return;
     }
     final songs = _active!.items.where((i) => i.isSong).toList();
-    final entries = songs
-        .map((i) => (
-              path: i.path,
-              title: i.title,
-              speedMultiplier: i.speedMultiplier,
-            ))
-        .toList();
+    final entries =
+        songs.map((i) => (path: i.path, title: i.title)).toList();
     final index = songs.indexWhere((i) => i.id == item.id);
     widget.onLaunchScript(script, entries, index);
   }
@@ -545,7 +561,7 @@ class _HomeViewState extends State<HomeView> {
     final script = ScriptParser.parse(content, title: item.title);
     final songs = _active!.items.where((i) => i.isSong).toList();
     final entries = songs
-        .map((i) => (path: i.path, title: i.title, speedMultiplier: i.speedMultiplier))
+        .map((i) => (path: i.path, title: i.title))
         .toList();
     final index = songs.indexWhere((i) => i.id == item.id);
     widget.onOpenScriptWithSetlist(script, entries, index.clamp(0, entries.length - 1));
@@ -575,6 +591,12 @@ class _HomeViewState extends State<HomeView> {
       child: Row(
         children: [
           const Spacer(),
+          _headerBtn(
+            icon: Icons.settings_rounded,
+            label: 'Settings',
+            onTap: widget.onOpenSettings,
+          ),
+          const SizedBox(width: 10),
           _headerBtn(
             icon: Icons.music_note_rounded,
             label: 'Load Example',
@@ -801,6 +823,7 @@ class _HomeViewState extends State<HomeView> {
     return _SongCardRow(
       key: ValueKey(item.id),
       item: item,
+      speed: _songSpeeds[item.title],
       index: index,
       isEditing: _editingId == item.id,
       editCtrl: _editCtrl,
@@ -1113,6 +1136,7 @@ class _HomeViewState extends State<HomeView> {
 
 class _SongCardRow extends StatefulWidget {
   final SetlistItem item;
+  final double? speed; // the song's own speed, null = default
   final int index;
   final bool isEditing;
   final TextEditingController editCtrl;
@@ -1131,6 +1155,7 @@ class _SongCardRow extends StatefulWidget {
   const _SongCardRow({
     super.key,
     required this.item,
+    required this.speed,
     required this.index,
     required this.isEditing,
     required this.editCtrl,
@@ -1422,9 +1447,9 @@ class _SongCardRowState extends State<_SongCardRow> {
 
                                   // Speed chip
                                   Tooltip(
-                                    message: item.speedMultiplier == null
-                                        ? 'Set song speed (using global default)'
-                                        : 'Speed: ${item.speedMultiplier!.toStringAsFixed(2)}×  — tap to change',
+                                    message: widget.speed == null
+                                        ? 'Set song speed (using default)'
+                                        : 'Speed: ${widget.speed!.toStringAsFixed(2)}×  — tap to change',
                                     child: InkWell(
                                       onTap: widget.onPickSpeed,
                                       borderRadius: BorderRadius.circular(6),
@@ -1432,13 +1457,13 @@ class _SongCardRowState extends State<_SongCardRow> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 7, vertical: 10),
                                         child: Text(
-                                          item.speedMultiplier == null
+                                          widget.speed == null
                                               ? '⚡'
-                                              : '${item.speedMultiplier!.toStringAsFixed(2)}×',
+                                              : '${widget.speed!.toStringAsFixed(2)}×',
                                           style: TextStyle(
                                             fontFamily: AppTextStyles.fontFamily,
                                             fontSize: 11,
-                                            color: item.speedMultiplier == null
+                                            color: widget.speed == null
                                                 ? AppColors.dimmedLine
                                                 : AppColors.accent,
                                             fontWeight: FontWeight.w600,
@@ -1588,7 +1613,7 @@ class _SpeedPickerDialogState extends State<_SpeedPickerDialog> {
                   ),
                   const SizedBox(width: 10),
                   const Text(
-                    'Auto  (use global default speed)',
+                    'Auto  (use the default speed)',
                     style: TextStyle(
                       fontFamily: AppTextStyles.fontFamily,
                       fontSize: 13,

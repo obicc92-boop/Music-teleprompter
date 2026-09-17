@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import '../models/setlist_models.dart';
+import 'song_settings_store.dart';
 
 class SetlistExportService {
   /// Writes a print-ready HTML file to Downloads and opens it in the browser.
@@ -14,7 +15,12 @@ class SetlistExportService {
       final fileName =
           '${safeName.isEmpty ? 'Setlist' : safeName}_${DateTime.now().millisecondsSinceEpoch}.html';
       final file = File('${dir.path}/$fileName');
-      await file.writeAsString(_buildHtml(setlist));
+      final songSpeeds = <String, double?>{
+        for (final item in setlist.items.where((i) => i.isSong))
+          item.title:
+              (await SongSettingsStore.getSettings(item.title)).scrollSpeedMultiplier,
+      };
+      await file.writeAsString(_buildHtml(setlist, songSpeeds));
       await _openFile(file.path);
       return file.path;
     } catch (_) {
@@ -22,7 +28,7 @@ class SetlistExportService {
     }
   }
 
-  static String _buildHtml(Setlist setlist) {
+  static String _buildHtml(Setlist setlist, Map<String, double?> songSpeeds) {
     final songRows = StringBuffer();
     int songNumber = 0;
     for (final item in setlist.items) {
@@ -32,9 +38,9 @@ class SetlistExportService {
         ''');
       } else {
         songNumber++;
-        final speed = item.speedMultiplier != null
-            ? '${item.speedMultiplier!.toStringAsFixed(1)}×'
-            : '—';
+        final songSpeed = songSpeeds[item.title];
+        final speed =
+            songSpeed != null ? '${songSpeed.toStringAsFixed(1)}×' : '—';
         final hex = '#${(item.colorValue & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
         songRows.write('''
           <tr>

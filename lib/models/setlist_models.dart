@@ -16,7 +16,7 @@ class SetlistItem {
   final String title;           // song only
   final int colorValue;         // song only
   final String note;            // song only
-  final double? speedMultiplier; // song only — null = use global default
+  final double? speedMultiplier; // legacy — read only to move it into SongSettings
   final String text;            // separator only
 
   // Per-card display style (song only)
@@ -106,7 +106,6 @@ class SetlistItem {
         'title': title,
         'colorValue': colorValue,
         'note': note,
-        'speedMultiplier': speedMultiplier,
         'text': text,
         'cardPosition': cardPosition,
         'cardFontSize': cardFontSize,
@@ -163,4 +162,4 @@ class Setlist {
 }
 
 // Used by app.dart for in-show teleprompter navigation (songs only, no separators)
-typedef SetlistEntry = ({String path, String title, double? speedMultiplier});
+typedef SetlistEntry = ({String path, String title});

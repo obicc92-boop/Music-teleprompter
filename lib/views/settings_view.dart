@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../engine/sync_engine.dart';
 import '../services/settings_service.dart';
 import '../utils/constants.dart';
 
@@ -9,15 +8,21 @@ enum _Section { display, playback, controls, shortcuts }
 
 class SettingsView extends StatefulWidget {
   final AppSettings settings;
-  final SyncEngine syncEngine;
+
+  /// The song whose settings are being edited, or null for the defaults.
+  final String? songTitle;
+  final bool songHasOwnSettings;
   final void Function(AppSettings) onChanged;
+  final VoidCallback onResetSong;
   final VoidCallback onClose;
 
   const SettingsView({
     super.key,
     required this.settings,
-    required this.syncEngine,
+    this.songTitle,
+    this.songHasOwnSettings = false,
     required this.onChanged,
+    required this.onResetSong,
     required this.onClose,
   });
 
@@ -29,17 +34,24 @@ class _SettingsViewState extends State<SettingsView> {
   late AppSettings _settings;
   _Section _section = _Section.display;
 
+  bool get _forSong => widget.songTitle != null;
+
   @override
   void initState() {
     super.initState();
     _settings = widget.settings;
   }
 
+  @override
+  void didUpdateWidget(SettingsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Picks up changes made outside the panel, e.g. Reset to default
+    _settings = widget.settings;
+  }
+
   void _update(AppSettings updated) {
     setState(() => _settings = updated);
-    SettingsService().save(updated);
     widget.onChanged(updated);
-    widget.syncEngine.setManualMultiplier(updated.scrollSpeedMultiplier);
   }
 
   // ── Layout ─────────────────────────────────────────────────────────────────
@@ -84,6 +96,12 @@ class _SettingsViewState extends State<SettingsView> {
           },
           onClose: widget.onClose,
         ),
+        if (_section == _Section.display || _section == _Section.playback)
+          _ScopeBar(
+            songTitle: widget.songTitle,
+            canReset: widget.songHasOwnSettings,
+            onReset: widget.onResetSong,
+          ),
         Flexible(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
@@ -179,7 +197,7 @@ class _SettingsViewState extends State<SettingsView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SettingRow(
-          label: 'Default Speed',
+          label: _forSong ? 'Speed' : 'Default Speed',
           trailing: _ValueBadge('${_settings.scrollSpeedMultiplier.toStringAsFixed(1)}×'),
           child: _styledSlider(
             value: _settings.scrollSpeedMultiplier,
@@ -191,7 +209,9 @@ class _SettingsViewState extends State<SettingsView> {
         _Divider(),
         _ToggleRow(
           label: 'Auto-advance to next song',
-          sublabel: 'Loads the next setlist song when the current one ends',
+          sublabel: _forSong
+              ? 'Loads the next setlist song when the current one ends · all songs'
+              : 'Loads the next setlist song when the current one ends',
           value: _settings.autoAdvance,
           onChanged: (v) => _update(_settings.copyWith(autoAdvance: v)),
         ),
@@ -450,6 +470,109 @@ class _ContentHeader extends StatelessWidget {
             constraints: const BoxConstraints(),
             splashRadius: 16,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Scope bar — whose settings the panel is editing ────────────────────────
+
+class _ScopeBar extends StatelessWidget {
+  final String? songTitle;
+  final bool canReset;
+  final VoidCallback onReset;
+
+  const _ScopeBar({
+    required this.songTitle,
+    required this.canReset,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final forSong = songTitle != null;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceElevated,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            forSong ? Icons.music_note_rounded : Icons.tune_rounded,
+            size: 15,
+            color: forSong ? AppColors.accent : AppColors.sectionHeader,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  forSong ? songTitle! : 'Default settings',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.activeLine,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  forSong
+                      ? 'Speed and display changes are saved for this song'
+                      : 'Used by every song that has no settings of its own',
+                  style: const TextStyle(
+                    fontFamily: AppTextStyles.fontFamily,
+                    fontSize: 10,
+                    color: AppColors.sectionHeader,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (forSong) ...[
+            const SizedBox(width: 10),
+            Tooltip(
+              message: canReset
+                  ? 'Use the default settings for this song'
+                  : 'This song already uses the default settings',
+              child: InkWell(
+                onTap: canReset ? onReset : null,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: canReset
+                          ? AppColors.accent
+                          : AppColors.dimmedLine,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Text(
+                    'Reset to default',
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.fontFamily,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: canReset
+                          ? AppColors.accent
+                          : AppColors.dimmedLine,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

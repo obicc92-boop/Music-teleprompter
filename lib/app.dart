@@ -4,9 +4,11 @@ import 'package:window_manager/window_manager.dart';
 import 'engine/sync_engine.dart';
 import 'models/script.dart';
 import 'models/setlist_models.dart';
+import 'models/song_settings.dart';
 import 'services/file_service.dart';
 import 'services/script_parser.dart';
 import 'services/settings_service.dart';
+import 'services/song_settings_store.dart';
 import 'views/home_view.dart';
 import 'views/editor_view.dart';
 import 'views/teleprompter_view.dart';
@@ -34,8 +36,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
 
   AppScreen _screen = AppScreen.home;
   Script _activeScript = Script.empty();
-  AppSettings _settings = const AppSettings();
+  AppSettings _settings = const AppSettings(); // defaults for every song
+  SongSettings _songSettings = SongSettings.none; // the active song's own
   bool _showSettings = false;
+  bool _applyingSongSpeed = false;
 
   bool _launchedFromHome = false;
   List<SetlistEntry> _setlist = [];
@@ -51,12 +55,14 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    _syncEngine.addListener(_onSyncEngineChanged);
     _loadSettings();
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
+    _syncEngine.removeListener(_onSyncEngineChanged);
     _syncEngine.dispose();
     super.dispose();
   }
@@ -65,6 +71,60 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     final settings = await SettingsService().load();
     setState(() => _settings = settings);
     _syncEngine.setManualMultiplier(settings.scrollSpeedMultiplier);
+  }
+
+  // ── Per-song settings ─────────────────────────────────────────────────────
+
+  AppSettings get _activeSongSettings => _songSettings.applyTo(_settings);
+
+  /// Loads a song's own settings and switches the scroll speed to it.
+  Future<SongSettings> _songSettingsFor(String songTitle) async {
+    final songSettings = await SongSettingsStore.getSettings(songTitle);
+    _applySongSpeed(songSettings.applyTo(_settings).scrollSpeedMultiplier);
+    return songSettings;
+  }
+
+  void _applySongSpeed(double speed) {
+    _applyingSongSpeed = true;
+    _syncEngine.setManualMultiplier(speed);
+    _applyingSongSpeed = false;
+  }
+
+  // Speed changes made while a song is on screen (keys, slider, tap tempo,
+  // phone remote) are saved for that song.
+  void _onSyncEngineChanged() {
+    if (_applyingSongSpeed || _screen != AppScreen.teleprompter) return;
+    final speed = _syncEngine.state.manualMultiplier;
+    if (speed == _activeSongSettings.scrollSpeedMultiplier) return;
+    _saveSongSettings(_songSettings.withSpeed(speed));
+  }
+
+  void _saveSongSettings(SongSettings songSettings) {
+    setState(() => _songSettings = songSettings);
+    SongSettingsStore.saveSettings(_activeScript.title, songSettings);
+  }
+
+  void _onDefaultSettingsChanged(AppSettings updated) {
+    setState(() => _settings = updated);
+    SettingsService().save(updated);
+  }
+
+  // Auto-advance and the foot pedal stay the same for every song.
+  void _onSongSettingsChanged(AppSettings updated) {
+    if (updated.autoAdvance != _settings.autoAdvance ||
+        updated.pedalAction != _settings.pedalAction) {
+      _onDefaultSettingsChanged(_settings.copyWith(
+        autoAdvance: updated.autoAdvance,
+        pedalAction: updated.pedalAction,
+      ));
+    }
+    _saveSongSettings(_songSettings.withChanges(_activeSongSettings, updated));
+    _applySongSpeed(updated.scrollSpeedMultiplier);
+  }
+
+  void _resetSongSettings() {
+    _saveSongSettings(SongSettings.none);
+    _applySongSpeed(_settings.scrollSpeedMultiplier);
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -88,13 +148,13 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     });
   }
 
-  void _launchTeleprompter(Script script) {
+  Future<void> _launchTeleprompter(Script script) async {
+    final songSettings = await _songSettingsFor(script.title);
+    if (!mounted) return;
     if (_editorSetlist.isNotEmpty) {
-      final songSpeed = _editorSetlist[_editorSetlistIndex].speedMultiplier;
-      _syncEngine
-          .setManualMultiplier(songSpeed ?? _settings.scrollSpeedMultiplier);
       setState(() {
         _activeScript = script;
+        _songSettings = songSettings;
         _setlist = _editorSetlist;
         _setlistIndex = _editorSetlistIndex;
         _launchedFromHome = true;
@@ -103,6 +163,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     } else {
       setState(() {
         _activeScript = script;
+        _songSettings = songSettings;
         _launchedFromHome = false;
         _setlist = [];
         _setlistIndex = 0;
@@ -111,13 +172,13 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     }
   }
 
-  void _launchScriptDirect(
-      Script script, List<SetlistEntry> setlist, int index) {
-    final songSpeed = setlist.isNotEmpty ? setlist[index].speedMultiplier : null;
-    _syncEngine
-        .setManualMultiplier(songSpeed ?? _settings.scrollSpeedMultiplier);
+  Future<void> _launchScriptDirect(
+      Script script, List<SetlistEntry> setlist, int index) async {
+    final songSettings = await _songSettingsFor(script.title);
+    if (!mounted) return;
     setState(() {
       _activeScript = script;
+      _songSettings = songSettings;
       _setlist = setlist;
       _setlistIndex = index;
       _launchedFromHome = true;
@@ -161,10 +222,11 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     final content = await _fileService.readSavedScript(next.path);
     if (content == null || !mounted) return;
     final script = ScriptParser.parse(content, title: next.title);
-    _syncEngine.setManualMultiplier(
-        next.speedMultiplier ?? _settings.scrollSpeedMultiplier);
+    final songSettings = await _songSettingsFor(script.title);
+    if (!mounted) return;
     setState(() {
       _activeScript = script;
+      _songSettings = songSettings;
       _setlistIndex++;
     });
   }
@@ -175,10 +237,11 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     final content = await _fileService.readSavedScript(prev.path);
     if (content == null || !mounted) return;
     final script = ScriptParser.parse(content, title: prev.title);
-    _syncEngine.setManualMultiplier(
-        prev.speedMultiplier ?? _settings.scrollSpeedMultiplier);
+    final songSettings = await _songSettingsFor(script.title);
+    if (!mounted) return;
     setState(() {
       _activeScript = script;
+      _songSettings = songSettings;
       _setlistIndex--;
     });
   }
@@ -224,6 +287,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           onOpenScript: _openScript,
           onLaunchScript: _launchScriptDirect,
           onOpenScriptWithSetlist: _openScriptWithSetlist,
+          onOpenSettings: () => setState(() => _showSettings = true),
         );
       case AppScreen.editor:
         return EditorView(
@@ -236,7 +300,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           key: ValueKey(_activeScript.title + _setlistIndex.toString()),
           script: _activeScript,
           syncEngine: _syncEngine,
-          settings: _settings,
+          settings: _activeSongSettings,
           onBack: _backFromTeleprompter,
           onSettings: () => setState(() => _showSettings = true),
           onNextScript: _hasNextScript ? _nextScript : null,
@@ -248,7 +312,10 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     }
   }
 
+  // Opened from a song, the panel edits that song's settings; from the home
+  // screen it edits the defaults.
   Widget _buildSettingsOverlay() {
+    final onSong = _screen == AppScreen.teleprompter;
     return Positioned.fill(
       child: GestureDetector(
         onTap: () => setState(() => _showSettings = false),
@@ -258,9 +325,12 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           child: GestureDetector(
             onTap: () {},
             child: SettingsView(
-              settings: _settings,
-              syncEngine: _syncEngine,
-              onChanged: (s) => setState(() => _settings = s),
+              settings: onSong ? _activeSongSettings : _settings,
+              songTitle: onSong ? _activeScript.title : null,
+              songHasOwnSettings: onSong && !_songSettings.isEmpty,
+              onChanged:
+                  onSong ? _onSongSettingsChanged : _onDefaultSettingsChanged,
+              onResetSong: _resetSongSettings,
               onClose: () => setState(() => _showSettings = false),
             ),
           ),
