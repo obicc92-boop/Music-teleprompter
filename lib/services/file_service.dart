@@ -55,12 +55,28 @@ class FileService {
   }
 
   Future<String> saveToLibrary(String content, String title) async {
-    final dir = await getScriptsDirectory();
-    final safe = title.replaceAll(RegExp(r'[^\w\s\-]'), '').trim();
-    final name = safe.isEmpty ? 'untitled' : safe;
-    final file = File('${dir.path}/$name.txt');
+    final file = _libraryFile(await getScriptsDirectory(), title);
     await file.writeAsString(content);
     return file.path;
+  }
+
+  /// [title], or "title 2", "title 3"… if a song with that name is already
+  /// in the library, so saving a new song never overwrites another one.
+  Future<String> uniqueLibraryTitle(String title) async {
+    final dir = await getScriptsDirectory();
+    var candidate = title;
+    var n = 2;
+    while (await _libraryFile(dir, candidate).exists()) {
+      candidate = '$title $n';
+      n++;
+    }
+    return candidate;
+  }
+
+  File _libraryFile(Directory dir, String title) {
+    final safe = title.replaceAll(RegExp(r'[^\w\s\-]'), '').trim();
+    final name = safe.isEmpty ? 'untitled' : safe;
+    return File('${dir.path}/$name.txt');
   }
 
   Future<void> saveSetlistMeta({
@@ -156,23 +172,6 @@ class FileService {
   Future<String?> readSavedScript(String path) async {
     try {
       return await File(path).readAsString();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> autosave(String content, String title) async {
-    final dir = await getScriptsDirectory();
-    final file = File('${dir.path}/_autosave.txt');
-    await file.writeAsString('# $title\n\n$content');
-  }
-
-  Future<String?> loadAutosave() async {
-    try {
-      final dir = await getScriptsDirectory();
-      final file = File('${dir.path}/_autosave.txt');
-      if (await file.exists()) return await file.readAsString();
-      return null;
     } catch (_) {
       return null;
     }

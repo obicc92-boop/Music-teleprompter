@@ -17,6 +17,10 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
   final VoidCallback? onPlayPauseOverride;
   final String pedalAction;
 
+  /// Lets the owner give keys back after something else (e.g. the timing
+  /// recorder) held focus.
+  final FocusNode? focusNode;
+
   // Optional overrides for section jumps — called instead of scrollEngine directly.
   // Use these when you need side effects (e.g. seeking audio) on section change.
   final VoidCallback? onJumpNextSection;
@@ -35,6 +39,7 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
     this.onTapTempo,
     this.onPlayPauseOverride,
     this.pedalAction = 'nextSection',
+    this.focusNode,
     this.onJumpNextSection,
     this.onJumpPrevSection,
   });
@@ -51,12 +56,12 @@ class _TeleprompterKeyboardHandlerState
   @override
   void initState() {
     super.initState();
-    _focusNode = FocusNode(debugLabel: 'TeleprompterKeys');
+    _focusNode = widget.focusNode ?? FocusNode(debugLabel: 'TeleprompterKeys');
   }
 
   @override
   void dispose() {
-    _focusNode.dispose();
+    if (widget.focusNode == null) _focusNode.dispose();
     super.dispose();
   }
 
@@ -107,12 +112,14 @@ class _TeleprompterKeyboardHandlerState
       _jumpPrev();
       return KeyEventResult.handled;
     }
+    // Speed keys and tap tempo don't apply to a song following its timing
+    final timed = widget.scrollEngine.isTimed;
     if (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.numpadAdd) {
-      widget.syncEngine.adjustSpeed(ScrollConstants.keyboardSpeedStep);
+      if (!timed) widget.syncEngine.adjustSpeed(ScrollConstants.speedStep);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract) {
-      widget.syncEngine.adjustSpeed(-ScrollConstants.keyboardSpeedStep);
+      if (!timed) widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyF) {
@@ -132,7 +139,7 @@ class _TeleprompterKeyboardHandlerState
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyT) {
-      widget.onTapTempo?.call();
+      if (!timed) widget.onTapTempo?.call();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyN) {

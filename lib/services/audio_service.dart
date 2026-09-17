@@ -58,6 +58,13 @@ class AudioService extends ChangeNotifier {
     await _player.seek(Duration.zero);
   }
 
+  double get positionSeconds => _player.position.inMicroseconds / 1e6;
+
+  Future<void> seek(Duration position) async {
+    if (!_loaded) return;
+    await _player.seek(position);
+  }
+
   Future<void> seekToFraction(double fraction) async {
     final dur = _duration;
     if (dur == null || !_loaded) return;

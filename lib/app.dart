@@ -5,6 +5,7 @@ import 'engine/sync_engine.dart';
 import 'models/script.dart';
 import 'models/setlist_models.dart';
 import 'models/song_settings.dart';
+import 'models/song_theme.dart';
 import 'services/file_service.dart';
 import 'services/script_parser.dart';
 import 'services/settings_service.dart';
@@ -13,7 +14,7 @@ import 'views/home_view.dart';
 import 'views/editor_view.dart';
 import 'views/teleprompter_view.dart';
 import 'views/settings_view.dart';
-import 'utils/constants.dart';
+import 'utils/app_theme.dart';
 import 'widgets/window_title_bar.dart';
 
 enum AppScreen { home, editor, teleprompter }
@@ -39,7 +40,14 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   AppSettings _settings = const AppSettings(); // defaults for every song
   SongSettings _songSettings = SongSettings.none; // the active song's own
   bool _showSettings = false;
+  SettingsSection _settingsSection = SettingsSection.display;
   bool _applyingSongSpeed = false;
+
+  // Where each song was left mid-way, so an accidental Esc / next / previous
+  // doesn't lose your place. Only recent: a song stopped in this afternoon's
+  // rehearsal still starts from the top at the show.
+  final Map<String, (int, DateTime)> _leftMidSong = {};
+  static const _resumeWithin = Duration(minutes: 5);
 
   bool _launchedFromHome = false;
   List<SetlistEntry> _setlist = [];
@@ -122,9 +130,23 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     _applySongSpeed(updated.scrollSpeedMultiplier);
   }
 
+  // Colours picked from the song's own menu are saved for that song too
+  void _setSongTheme(SongTheme theme) => _onSongSettingsChanged(
+      _activeSongSettings.copyWith(colorTheme: theme.code));
+
+  void _resetSongTheme() =>
+      _saveSongSettings(_songSettings.withColorTheme(null));
+
   void _resetSongSettings() {
     _saveSongSettings(SongSettings.none);
     _applySongSpeed(_settings.scrollSpeedMultiplier);
+  }
+
+  void _openSettings([SettingsSection section = SettingsSection.display]) {
+    setState(() {
+      _settingsSection = section;
+      _showSettings = true;
+    });
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -253,18 +275,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     return MaterialApp(
       title: 'Music Teleprompter',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: AppColors.background,
-        colorScheme: const ColorScheme.dark(
-          primary: AppColors.accent,
-          surface: AppColors.surface,
-        ),
-        fontFamily: AppTextStyles.fontFamily,
-        textTheme: const TextTheme(
-          bodyMedium: TextStyle(color: AppColors.activeLine),
-        ),
-      ),
+      theme: buildAppTheme(),
       home: Stack(
         children: [
           Column(
@@ -287,13 +298,16 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           onOpenScript: _openScript,
           onLaunchScript: _launchScriptDirect,
           onOpenScriptWithSetlist: _openScriptWithSetlist,
-          onOpenSettings: () => setState(() => _showSettings = true),
+          onOpenSettings: _openSettings,
+          onOpenShortcuts: () => _openSettings(SettingsSection.shortcuts),
+          onSettingsRestored: _loadSettings,
         );
       case AppScreen.editor:
         return EditorView(
           initialScript: _activeScript,
           onLaunchTeleprompter: _launchTeleprompter,
           onBack: _backToHome,
+          isLibrarySong: _editorSetlist.isNotEmpty,
         );
       case AppScreen.teleprompter:
         return TeleprompterView(
@@ -302,13 +316,35 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           syncEngine: _syncEngine,
           settings: _activeSongSettings,
           onBack: _backFromTeleprompter,
-          onSettings: () => setState(() => _showSettings = true),
+          onSettings: _openSettings,
           onNextScript: _hasNextScript ? _nextScript : null,
           onPrevScript: _hasPrevScript ? _prevScript : null,
+          resumeAtLine: _resumeLineFor(_activeScript.title),
+          onLeave: _rememberWhereLeft,
+          defaultTheme: _settings.songTheme,
+          songHasOwnTheme: _songSettings.colorTheme != null,
+          onThemeChanged: _setSongTheme,
+          onThemeReset: _resetSongTheme,
           setlistPosition: _launchedFromHome
               ? '${_setlistIndex + 1} / ${_setlist.length}'
               : null,
         );
+    }
+  }
+
+  int? _resumeLineFor(String songTitle) {
+    final left = _leftMidSong[songTitle];
+    if (left == null) return null;
+    final (line, at) = left;
+    return DateTime.now().difference(at) < _resumeWithin ? line : null;
+  }
+
+  // Called while the song's view is being disposed, so no setState here
+  void _rememberWhereLeft(String songTitle, int? line) {
+    if (line == null) {
+      _leftMidSong.remove(songTitle);
+    } else {
+      _leftMidSong[songTitle] = (line, DateTime.now());
     }
   }
 
@@ -320,7 +356,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
       child: GestureDetector(
         onTap: () => setState(() => _showSettings = false),
         child: Container(
-          color: Colors.black54,
+          color: const Color(0xB3000000),
           alignment: Alignment.center,
           child: GestureDetector(
             onTap: () {},
@@ -332,6 +368,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
                   onSong ? _onSongSettingsChanged : _onDefaultSettingsChanged,
               onResetSong: _resetSongSettings,
               onClose: () => setState(() => _showSettings = false),
+              initialSection: _settingsSection,
             ),
           ),
         ),

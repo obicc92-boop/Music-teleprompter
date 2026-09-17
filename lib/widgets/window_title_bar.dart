@@ -41,7 +41,10 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
 
     return Container(
       height: 36,
-      color: AppColors.surface,
+      decoration: const BoxDecoration(
+        color: AppColors.background,
+        border: Border(bottom: BorderSide(color: AppColors.hairline)),
+      ),
       child: Row(
         children: [
           // macOS: native traffic lights occupy ~72px at top-left — leave room
@@ -63,10 +66,10 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
                       const Text(
                         'Music Teleprompter',
                         style: TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
+                          fontFamily: AppTextStyles.ui,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: AppColors.sectionHeader,
+                          color: AppColors.uiHint,
                           letterSpacing: 0.3,
                         ),
                       ),
@@ -132,7 +135,7 @@ class _WinButtonState extends State<_WinButton> {
         ? const Color(0xFFE81123)
         : AppColors.surfaceElevated;
     final iconColor =
-        (_hovered && widget.isClose) ? Colors.white : AppColors.sectionHeader;
+        (_hovered && widget.isClose) ? Colors.white : AppColors.uiHint;
 
     return Tooltip(
       message: widget.tooltip,

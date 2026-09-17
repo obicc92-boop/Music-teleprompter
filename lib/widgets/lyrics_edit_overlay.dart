@@ -82,8 +82,8 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
         border: Border(
-          bottom: BorderSide(color: AppColors.surfaceElevated),
-          left: BorderSide(color: AppColors.surfaceElevated),
+          bottom: BorderSide(color: AppColors.hairline),
+          left: BorderSide(color: AppColors.hairline),
         ),
       ),
       child: Row(
@@ -91,9 +91,9 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
           const Text(
             'EDIT LYRICS',
             style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.ui,
               fontSize: 11,
-              color: AppColors.activeLine,
+              color: AppColors.textPrimary,
               letterSpacing: 2,
               fontWeight: FontWeight.w700,
             ),
@@ -104,8 +104,8 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
             child: const Text(
               'Cancel',
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                color: AppColors.sectionHeader,
+                fontFamily: AppTextStyles.ui,
+                color: AppColors.uiHint,
                 fontSize: 13,
               ),
             ),
@@ -118,7 +118,7 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
   Widget _buildEditor() {
     return Container(
       decoration: const BoxDecoration(
-        border: Border(left: BorderSide(color: AppColors.surfaceElevated)),
+        border: Border(left: BorderSide(color: AppColors.hairline)),
       ),
       padding: const EdgeInsets.all(16),
       child: TextField(
@@ -127,18 +127,18 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
         expands: true,
         textAlignVertical: TextAlignVertical.top,
         style: const TextStyle(
-          fontFamily: AppTextStyles.fontFamily,
+          fontFamily: AppTextStyles.mono,
           fontSize: 13,
-          color: AppColors.activeLine,
+          color: AppColors.textPrimary,
           height: 1.7,
         ),
         decoration: InputDecoration(
           hintText:
               'Type lyrics here…\n\nUse [Verse 1], [Chorus] etc. for section headers.',
           hintStyle: const TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.mono,
             fontSize: 12,
-            color: AppColors.dimmedLine,
+            color: AppColors.uiHint,
           ),
           filled: true,
           fillColor: AppColors.surfaceElevated,
@@ -158,8 +158,8 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
       decoration: const BoxDecoration(
         color: AppColors.surface,
         border: Border(
-          top: BorderSide(color: AppColors.surfaceElevated),
-          left: BorderSide(color: AppColors.surfaceElevated),
+          top: BorderSide(color: AppColors.hairline),
+          left: BorderSide(color: AppColors.hairline),
         ),
       ),
       child: SizedBox(
@@ -176,7 +176,7 @@ class _LyricsEditOverlayState extends State<LyricsEditOverlay> {
           child: Text(
             _saving ? 'Saving…' : 'Apply & Save',
             style: const TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.ui,
               fontWeight: FontWeight.w700,
               letterSpacing: 1,
               fontSize: 12,

@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/song_theme.dart';
 import '../utils/constants.dart';
 
 class AppSettings {
@@ -11,6 +12,9 @@ class AppSettings {
   final double activeLineYOffset;
   final bool showActiveLineHighlight;
 
+  /// The lyrics screen's colours, as saved by [SongTheme.code].
+  final String colorTheme;
+
   const AppSettings({
     this.fontSize = AppDimensions.defaultFontSize,
     this.scrollSpeedMultiplier = ScrollConstants.defaultSpeedMultiplier,
@@ -20,7 +24,10 @@ class AppSettings {
     this.textAlignLeft = false,
     this.activeLineYOffset = AppDimensions.activeLineYOffset,
     this.showActiveLineHighlight = true,
+    this.colorTheme = 'default',
   });
+
+  SongTheme get songTheme => SongTheme.fromCode(colorTheme);
 
   AppSettings copyWith({
     double? fontSize,
@@ -31,6 +38,7 @@ class AppSettings {
     bool? textAlignLeft,
     double? activeLineYOffset,
     bool? showActiveLineHighlight,
+    String? colorTheme,
   }) =>
       AppSettings(
         fontSize: fontSize ?? this.fontSize,
@@ -43,6 +51,7 @@ class AppSettings {
         activeLineYOffset: activeLineYOffset ?? this.activeLineYOffset,
         showActiveLineHighlight:
             showActiveLineHighlight ?? this.showActiveLineHighlight,
+        colorTheme: colorTheme ?? this.colorTheme,
       );
 }
 
@@ -55,6 +64,7 @@ class SettingsService {
   static const _kTextAlignLeft = 'text_align_left';
   static const _kActiveLineYOffset = 'active_line_y_offset';
   static const _kShowHighlight = 'show_active_line_highlight';
+  static const _kColorTheme = 'color_theme';
 
   Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -69,6 +79,7 @@ class SettingsService {
       activeLineYOffset: prefs.getDouble(_kActiveLineYOffset) ??
           AppDimensions.activeLineYOffset,
       showActiveLineHighlight: prefs.getBool(_kShowHighlight) ?? true,
+      colorTheme: prefs.getString(_kColorTheme) ?? 'default',
     );
   }
 
@@ -82,5 +93,6 @@ class SettingsService {
     await prefs.setBool(_kTextAlignLeft, s.textAlignLeft);
     await prefs.setDouble(_kActiveLineYOffset, s.activeLineYOffset);
     await prefs.setBool(_kShowHighlight, s.showActiveLineHighlight);
+    await prefs.setString(_kColorTheme, s.colorTheme);
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
@@ -10,7 +11,6 @@ import '../models/script_formatting.dart';
 import '../services/audio_service.dart';
 import '../services/chord_transposer.dart';
 import '../services/remote_control_server.dart';
-import '../services/song_theme_store.dart';
 import '../models/song_theme.dart';
 import '../services/song_audio_store.dart';
 import '../services/song_lrc_store.dart';
@@ -23,8 +23,28 @@ import '../widgets/controls_overlay.dart';
 import '../widgets/format_overlay.dart';
 import '../widgets/mirror_transform.dart';
 import '../widgets/script_line_widget.dart';
+import '../widgets/timing_recorder.dart';
 import '../services/settings_service.dart';
 import '../services/formatting_service.dart';
+
+// Nobody touches the computer while singing, so without this the display
+// dims or sleeps mid-song. Counted, because moving to the next song builds
+// its view before the previous one is disposed.
+class _ScreenAwake {
+  static int _holders = 0;
+
+  static void hold() {
+    if (_holders++ == 0) _set(true);
+  }
+
+  static void release() {
+    if (--_holders == 0) _set(false);
+  }
+
+  static void _set(bool awake) {
+    unawaited(WakelockPlus.toggle(enable: awake).catchError((Object _) {}));
+  }
+}
 
 class TeleprompterView extends StatefulWidget {
   final Script script;
@@ -36,6 +56,18 @@ class TeleprompterView extends StatefulWidget {
   final VoidCallback? onPrevScript;
   final String? setlistPosition;
 
+  /// Line to pick up from, when this song was left mid-way a moment ago.
+  final int? resumeAtLine;
+
+  /// Reports where the song was left: its line if mid-song, otherwise null.
+  final void Function(String songTitle, int? line)? onLeave;
+
+  /// Colours every song uses unless it has its own, and this song's choice.
+  final SongTheme defaultTheme;
+  final bool songHasOwnTheme;
+  final ValueChanged<SongTheme>? onThemeChanged;
+  final VoidCallback? onThemeReset;
+
   const TeleprompterView({
     super.key,
     required this.script,
@@ -46,6 +78,12 @@ class TeleprompterView extends StatefulWidget {
     this.onNextScript,
     this.onPrevScript,
     this.setlistPosition,
+    this.resumeAtLine,
+    this.onLeave,
+    required this.defaultTheme,
+    this.songHasOwnTheme = false,
+    this.onThemeChanged,
+    this.onThemeReset,
   });
 
   @override
@@ -65,11 +103,17 @@ class _TeleprompterViewState extends State<TeleprompterView>
   bool _showFormatOverlay = false;
   bool _isMirrored = false;
   bool _cueMode = false;
-  List<(int, Duration)> _lrcTimestamps = [];
-  String? _lrcFileName;
+  // Song timing: where the lines' times come from (null = scrolls at speed)
+  String? _timingLabel;
+  bool _timingRemovable = false; // timing written in a lyrics file stays
+  bool _recordingTiming = false;
+  String? _notice; // short message at the top, e.g. "Press Esc again…"
+  Timer? _noticeTimer;
+  DateTime? _escapePressedAt;
+  bool _initialized = false;
+  final _keyboardFocus = FocusNode(debugLabel: 'TeleprompterKeys');
   int _transposeSteps = 0;
   int? _countdownValue;
-  SongTheme _songTheme = SongTheme.defaultTheme;
   bool _isOnSecondDisplay = false;
   final List<DateTime> _tapTimes = [];
 
@@ -78,16 +122,21 @@ class _TeleprompterViewState extends State<TeleprompterView>
   @override
   void initState() {
     super.initState();
+    _ScreenAwake.hold();
     _settings = widget.settings;
     _script = widget.script;
+
+    _audioService = AudioService();
 
     _scrollEngine = ScrollEngine(syncEngine: widget.syncEngine);
     _scrollEngine.attach(this);
     _scrollEngine.setScript(_script, _effectiveLineHeight);
+    _scrollEngine.onSeek = _seekAudio;
     _syncEndReachedCallback();
     _scrollEngine.start();
+    _applyScriptTimestamps();
+    _resumeIfLeftMidSong();
 
-    _audioService = AudioService();
     widget.syncEngine.addListener(_onSyncEngineChanged);
 
     _remoteServer = RemoteControlServer(onCommand: _onRemoteCommand);
@@ -98,8 +147,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
     _loadFormatting();
     _loadSavedAudio();
     _loadSavedTranspose();
-    _loadSavedTheme();
-    _loadSavedLrc();
+    _loadSavedTiming();
+    _initialized = true;
   }
 
   Future<void> _loadFormatting() async {
@@ -114,6 +163,9 @@ class _TeleprompterViewState extends State<TeleprompterView>
     if (!ok) {
       // Saved path no longer valid — remove stale entry
       await SongAudioStore.removePath(_script.title);
+    } else {
+      // A timed song follows its backing track when it has one
+      _scrollEngine.externalClock = () => _audioService.positionSeconds;
     }
     if (mounted) setState(() {});
   }
@@ -129,15 +181,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
     SongTransposeStore.saveTranspose(_script.title, clamped);
   }
 
-  Future<void> _loadSavedTheme() async {
-    final theme = await SongThemeStore.getTheme(_script.title);
-    if (mounted) setState(() => _songTheme = theme);
-  }
-
-  void _setTheme(SongTheme theme) {
-    setState(() => _songTheme = theme);
-    SongThemeStore.saveTheme(_script.title, theme);
-  }
+  SongTheme get _songTheme => _settings.songTheme;
 
   void _toggleCueMode() => setState(() => _cueMode = !_cueMode);
 
@@ -174,7 +218,10 @@ class _TeleprompterViewState extends State<TeleprompterView>
     setState(() => _countdownValue = 3);
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
       final next = (_countdownValue ?? 0) - 1;
       if (next <= 0) {
         t.cancel();
@@ -188,6 +235,12 @@ class _TeleprompterViewState extends State<TeleprompterView>
 
   @override
   void dispose() {
+    final line = _scrollEngine.activeLineIndex;
+    final midSong = line > 0 && line < _script.totalLines - 1;
+    widget.onLeave?.call(_script.title, midSong ? line : null);
+    _noticeTimer?.cancel();
+    _keyboardFocus.dispose();
+    _ScreenAwake.release();
     _countdownTimer?.cancel();
     _remoteServer.stop();
     widget.syncEngine.removeListener(_onSyncEngineChanged);
@@ -196,13 +249,12 @@ class _TeleprompterViewState extends State<TeleprompterView>
     super.dispose();
   }
 
-
-
   Script get _displayScript =>
       ChordTransposer.transposeScript(_script, _transposeSteps);
 
-  double get _effectiveLineHeight =>
-      _script.hasChordLines ? _settings.fontSize * 3.0 : _settings.fontSize * 2.0;
+  double get _effectiveLineHeight => _script.hasChordLines
+      ? _settings.fontSize * 3.0
+      : _settings.fontSize * 2.0;
 
   @override
   void didUpdateWidget(TeleprompterView oldWidget) {
@@ -244,11 +296,10 @@ class _TeleprompterViewState extends State<TeleprompterView>
   void _syncEndReachedCallback() {
     _scrollEngine.onEndReached =
         (_settings.autoAdvance && widget.onNextScript != null)
-            ? () => Future.delayed(
-                  const Duration(seconds: 3),
-                  () { if (mounted) widget.onNextScript!(); },
-                )
-            : null;
+        ? () => Future.delayed(const Duration(seconds: 3), () {
+            if (mounted) widget.onNextScript!();
+          })
+        : null;
   }
 
   // ── Fullscreen / back ──────────────────────────────────────────────────────
@@ -259,8 +310,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
     await windowManager.setFullScreen(next);
   }
 
-  bool get _hasSecondDisplay =>
-      PlatformDispatcher.instance.displays.length > 1;
+  bool get _hasSecondDisplay => PlatformDispatcher.instance.displays.length > 1;
 
   Future<void> _moveToSecondDisplay() async {
     if (_isOnSecondDisplay) {
@@ -287,6 +337,49 @@ class _TeleprompterViewState extends State<TeleprompterView>
         _isFullscreen = true;
       });
     }
+  }
+
+  // ── Keeping your place ─────────────────────────────────────────────────────
+
+  void _resumeIfLeftMidSong() {
+    final line = widget.resumeAtLine;
+    if (line == null || line >= _script.totalLines) return;
+    _scrollEngine.jumpToLine(line);
+    final sections = _script.sections;
+    final where = sections.isEmpty
+        ? 'line ${line + 1}'
+        : sections[_script.sectionIndexForLine(line)].label;
+    _notice = 'Picked up where you left off — $where · R starts over';
+    _noticeTimer = Timer(const Duration(seconds: 5), _clearNotice);
+  }
+
+  void _showNotice(String text, Duration duration) {
+    _noticeTimer?.cancel();
+    setState(() => _notice = text);
+    _noticeTimer = Timer(duration, _clearNotice);
+  }
+
+  void _clearNotice() {
+    if (mounted) setState(() => _notice = null);
+  }
+
+  // While a song plays, Esc needs a second press, so a stray key can't stop
+  // the show. The on-screen back button still leaves at once.
+  void _handleEscape() {
+    final playing = widget.syncEngine.isPlaying || _countdownValue != null;
+    final pressedAt = _escapePressedAt;
+    final pressedAgain =
+        pressedAt != null &&
+        DateTime.now().difference(pressedAt) < const Duration(seconds: 3);
+    if (!playing || pressedAgain) {
+      _handleBack();
+      return;
+    }
+    _escapePressedAt = DateTime.now();
+    _showNotice(
+      'Press Esc again to leave this song',
+      const Duration(seconds: 3),
+    );
   }
 
   void _handleBack() {
@@ -347,66 +440,134 @@ class _TeleprompterViewState extends State<TeleprompterView>
   // ── Audio ──────────────────────────────────────────────────────────────────
 
   Future<void> _onUnloadAudio() async {
-    _onUnloadLrc(); // LRC requires audio — remove it too
+    _scrollEngine.externalClock = null; // timing keeps running on its own clock
     _audioService.unload();
     await SongAudioStore.removePath(_script.title);
     setState(() {});
   }
 
-  // ── LRC sync ───────────────────────────────────────────────────────────────
+  // ── Song timing ────────────────────────────────────────────────────────────
+  // A timed song scrolls line by line at the moments it was timed: from a
+  // rehearsal recording, from online synced lyrics, or from timestamps in the
+  // lyrics file itself. No backing track is needed.
 
-  Future<void> _loadSavedLrc() async {
-    // Check file path first, then fall back to stored content (online search results)
+  // Timestamps written in the lyrics file itself ([mm:ss.xx] lines)
+  void _applyScriptTimestamps() {
+    final lines = _script.allLines;
+    final timeline = [
+      for (var i = 0; i < lines.length; i++)
+        if (lines[i].timestamp != null)
+          (i, Duration(microseconds: (lines[i].timestamp! * 1e6).round())),
+    ];
+    _setTimeline(
+      timeline,
+      label: 'Timing from the lyrics file',
+      removable: false,
+    );
+  }
+
+  Future<void> _loadSavedTiming() async {
     final path = await SongLrcStore.getPath(_script.title);
     if (path != null) {
-      if (mounted) await _applyLrcFromFile(path);
+      try {
+        final name = path.split('/').last.split('\\').last;
+        _setTimeline(
+          LrcService.matchToScript(LrcService.parseFile(path), _script),
+          label: 'Timing from $name',
+          removable: true,
+        );
+      } catch (_) {
+        await SongLrcStore.removePath(_script.title);
+      }
       return;
     }
     final content = await SongLrcContentStore.getContent(_script.title);
-    if (content != null && mounted) {
-      final lines = LrcService.parse(content);
-      _applyLrcLines(lines, displayName: 'Online lyrics');
-    }
+    if (content != null && mounted) _applyTimingContent(content);
   }
 
-  Future<void> _applyLrcFromFile(String path) async {
-    try {
-      final lines = LrcService.parseFile(path);
-      final name = path.split('/').last.split('\\').last;
-      _applyLrcLines(lines, displayName: name);
-    } catch (_) {
-      await SongLrcStore.removePath(_script.title);
-    }
+  void _applyTimingContent(String content) {
+    _setTimeline(
+      LrcService.matchToScript(LrcService.parse(content), _script),
+      label: LrcService.isRehearsalTiming(content)
+          ? 'Rehearsal timing'
+          : 'Online synced timing',
+      removable: true,
+    );
   }
 
-  void _applyLrcLines(List<LrcLine> lines, {required String displayName}) {
-    final timestamps = LrcService.matchToScript(lines, _script);
-    setState(() {
-      _lrcTimestamps = timestamps;
-      _lrcFileName = displayName;
-    });
-    _startLrcSync();
+  void _setTimeline(
+    List<(int, Duration)> timeline, {
+    required String label,
+    required bool removable,
+  }) {
+    if (timeline.isEmpty || !mounted) return;
+    _scrollEngine.setTimeline(timeline);
+    _timingLabel = label;
+    _timingRemovable = removable;
+    if (_initialized) setState(() {}); // setState isn't allowed in initState
   }
 
-  void _startLrcSync() {
-    _scrollEngine.stop();
-    // positionStream in _buildCanvas drives scroll when LRC is active
-  }
-
-  void _stopLrcSync() {
-    if (_lrcTimestamps.isEmpty) return;
-    _scrollEngine.start();
-  }
-
-  void _onUnloadLrc() {
-    if (_lrcTimestamps.isEmpty) return;
-    _stopLrcSync();
+  void _removeTiming() {
     SongLrcStore.removePath(_script.title);
     SongLrcContentStore.removeContent(_script.title);
+    _scrollEngine.clearTimeline();
     setState(() {
-      _lrcTimestamps = [];
-      _lrcFileName = null;
+      _timingLabel = null;
+      _timingRemovable = false;
     });
+    _applyScriptTimestamps(); // a lyrics file's own timing still applies
+  }
+
+  // ── Recording timing in rehearsal ──────────────────────────────────────────
+
+  void _startRecordingTiming() {
+    _countdownTimer?.cancel();
+    widget.syncEngine.stop();
+    _scrollEngine.clearTimeline(); // taps set the positions while recording
+    _scrollEngine
+        .resetToStart(); // here, not in the recorder's initState (mid-build)
+    setState(() {
+      _countdownValue = null;
+      _recordingTiming = true;
+    });
+  }
+
+  void _endRecording() {
+    setState(() => _recordingTiming = false);
+    _keyboardFocus.requestFocus(); // the recorder held the keys
+  }
+
+  Future<void> _saveRecordedTiming(List<(int, Duration)> lineTimes) async {
+    final lrc = LrcService.toLrc([
+      for (final (line, time) in lineTimes) (_script.allLines[line].text, time),
+    ], rehearsal: true);
+    await SongLrcContentStore.saveContent(_script.title, lrc);
+    await SongLrcStore.removePath(_script.title); // would take precedence
+    if (!mounted) return;
+    _endRecording();
+    _scrollEngine.resetToStart();
+    _applyTimingContent(lrc);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Timing saved. Press play and the lyrics follow it — '
+          'if the band drifts, press ↓ as a line starts.',
+        ),
+        duration: Duration(seconds: 5),
+      ),
+    );
+  }
+
+  void _cancelRecordingTiming() {
+    _endRecording();
+    // Back to whatever timing the song had before
+    _applyScriptTimestamps();
+    _loadSavedTiming();
+  }
+
+  void _seekAudio(double seconds) {
+    if (!_audioService.isLoaded) return;
+    _audioService.seek(Duration(microseconds: (seconds * 1e6).round()));
   }
 
   // ── Section jumps (with audio seek) ───────────────────────────────────────
@@ -420,10 +581,15 @@ class _TeleprompterViewState extends State<TeleprompterView>
     switch (action) {
       case RemoteAction.playPause:
         _onPlayPauseRequested();
+      // Timed songs follow their timing, so speed doesn't apply
       case RemoteAction.speedUp:
-        widget.syncEngine.adjustSpeed(0.1);
+        if (!_scrollEngine.isTimed) {
+          widget.syncEngine.adjustSpeed(ScrollConstants.speedStep);
+        }
       case RemoteAction.speedDown:
-        widget.syncEngine.adjustSpeed(-0.1);
+        if (!_scrollEngine.isTimed) {
+          widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep);
+        }
       case RemoteAction.nextSection:
         _jumpNextSection();
       case RemoteAction.prevSection:
@@ -452,7 +618,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
   }
 
   void _syncAudioToScroll() {
-    if (!_audioService.isLoaded) return;
+    // Timed songs seek their backing track through ScrollEngine.onSeek
+    if (!_audioService.isLoaded || _scrollEngine.isTimed) return;
     _audioService.seekToFraction(_scrollEngine.progressFraction);
   }
 
@@ -464,7 +631,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
       syncEngine: widget.syncEngine,
       scrollEngine: _scrollEngine,
       onToggleFullscreen: _toggleFullscreen,
-      onBack: _handleBack,
+      onBack: _handleEscape,
       onNextScript: widget.onNextScript,
       onPrevScript: widget.onPrevScript,
       onToggleMirror: () => setState(() => _isMirrored = !_isMirrored),
@@ -473,6 +640,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
       onJumpNextSection: _jumpNextSection,
       onJumpPrevSection: _jumpPrevSection,
       pedalAction: _settings.pedalAction,
+      focusNode: _keyboardFocus,
       child: Scaffold(
         backgroundColor: _songTheme.background,
         body: Listener(
@@ -487,164 +655,213 @@ class _TeleprompterViewState extends State<TeleprompterView>
             _scrollEngine.scrollByPixels(-event.panDelta.dy);
           },
           child: Stack(
-          children: [
-            MirrorTransform(
-              enabled: _isMirrored,
-              child: StreamBuilder<Duration>(
-                stream: _audioService.positionStream,
-                builder: (context, snap) {
-                  final pos = snap.data;
-                  if (pos != null && _lrcTimestamps.isNotEmpty) {
-                    final idx = LrcService.activeLineIndex(_lrcTimestamps, pos);
-                    if (idx != null) _scrollEngine.jumpToLine(idx);
-                  }
-                  return _buildCanvas(pos != null
-                      ? pos.inMicroseconds / 1000000.0
-                      : null);
-                },
-              ),
-            ),
-            _ProgressBar(scrollEngine: _scrollEngine, script: _script, onSeek: _onProgressBarSeek),
-            _ClockOverlay(syncEngine: widget.syncEngine),
-            if (_countdownValue != null)
-              _CountdownOverlay(value: _countdownValue!),
-            if (_audioService.isLoaded)
-              _AudioPositionBar(
-                audioService: _audioService,
-                scrollEngine: _scrollEngine,
-              ),
-            Positioned.fill(
-              child: ListenableBuilder(
-              listenable: _audioService,
-              builder: (context, _) => ControlsOverlay(
-                syncEngine: widget.syncEngine,
-                scrollEngine: _scrollEngine,
-                onFullscreen: _toggleFullscreen,
-                onSettings: widget.onSettings,
-                onFormatLyrics: () => setState(() => _showFormatOverlay = true),
-                onBack: _handleBack,
-                onNextScript: widget.onNextScript,
-                onPrevScript: widget.onPrevScript,
-                onToggleMirror: () => setState(() => _isMirrored = !_isMirrored),
-                onTapTempo: _onTapTempo,
-                onSetDuration: _onSetDuration,
-                onUnloadAudio: _onUnloadAudio,
-                setlistPosition: widget.setlistPosition,
-                isFullscreen: _isFullscreen,
-                isMirrored: _isMirrored,
-                songTitle: _script.title,
-                hasAudio: _audioService.isLoaded,
-                audioFileName: _audioService.fileName,
-                audioVolume: _audioService.volume,
-                onVolumeChanged: (v) => _audioService.setVolume(v),
-                hasChords: _script.hasChordLines,
-                transposeSteps: _transposeSteps,
-                onTransposeChanged: _setTranspose,
-                cueMode: _cueMode,
-                onToggleCueMode: _toggleCueMode,
-                remoteUrl: _remoteUrl,
-                songTheme: _songTheme,
-                onThemeChanged: _setTheme,
-                onMoveToDisplay: _hasSecondDisplay ? _moveToSecondDisplay : null,
-                isOnSecondDisplay: _isOnSecondDisplay,
-                onUnloadLrc: _lrcTimestamps.isNotEmpty ? _onUnloadLrc : null,
-                hasLrc: _lrcTimestamps.isNotEmpty,
-                lrcFileName: _lrcFileName,
-              ),
-            )),
-            if (_showFormatOverlay)
+            children: [
+              MirrorTransform(enabled: _isMirrored, child: _buildCanvas()),
+              // Lyrics fade out before they reach the controls bar
               Positioned(
-                right: 0, top: 0, bottom: 0, width: 400,
-                child: FormatOverlay(
-                  script: _script,
-                  formatting: _formatting,
-                  onChanged: _onFormattingChanged,
-                  onClose: () => setState(() => _showFormatOverlay = false),
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: AppDimensions.controlsHeight + 88,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          _songTheme.background,
+                          _songTheme.background.withValues(alpha: 0),
+                        ],
+                        stops: const [0.45, 1.0],
+                      ),
+                    ),
+                  ),
                 ),
               ),
-          ],
-        ),
+              _ProgressBar(
+                scrollEngine: _scrollEngine,
+                script: _script,
+                onSeek: _onProgressBarSeek,
+                accent: _songTheme.accent,
+              ),
+              _ClockOverlay(syncEngine: widget.syncEngine),
+              if (_countdownValue != null)
+                _CountdownOverlay(
+                  value: _countdownValue!,
+                  accent: _songTheme.accent,
+                ),
+              if (_notice != null) _TopNotice(text: _notice!),
+              if (_audioService.isLoaded)
+                _AudioPositionBar(
+                  audioService: _audioService,
+                  scrollEngine: _scrollEngine,
+                  accent: _songTheme.accent,
+                ),
+              if (!_recordingTiming)
+                Positioned.fill(
+                  child: ListenableBuilder(
+                    listenable: _audioService,
+                    builder: (context, _) => ControlsOverlay(
+                      syncEngine: widget.syncEngine,
+                      scrollEngine: _scrollEngine,
+                      onPlayPause: _onPlayPauseRequested,
+                      onFullscreen: _toggleFullscreen,
+                      onSettings: widget.onSettings,
+                      onFormatLyrics: () =>
+                          setState(() => _showFormatOverlay = true),
+                      onBack: _handleBack,
+                      onNextScript: widget.onNextScript,
+                      onPrevScript: widget.onPrevScript,
+                      onToggleMirror: () =>
+                          setState(() => _isMirrored = !_isMirrored),
+                      onTapTempo: _onTapTempo,
+                      onSetDuration: _onSetDuration,
+                      onUnloadAudio: _onUnloadAudio,
+                      setlistPosition: widget.setlistPosition,
+                      isFullscreen: _isFullscreen,
+                      isMirrored: _isMirrored,
+                      songTitle: _script.title,
+                      hasAudio: _audioService.isLoaded,
+                      audioFileName: _audioService.fileName,
+                      audioVolume: _audioService.volume,
+                      onVolumeChanged: (v) => _audioService.setVolume(v),
+                      hasChords: _script.hasChordLines,
+                      transposeSteps: _transposeSteps,
+                      onTransposeChanged: _setTranspose,
+                      cueMode: _cueMode,
+                      onToggleCueMode: _toggleCueMode,
+                      remoteUrl: _remoteUrl,
+                      songTheme: _songTheme,
+                      defaultTheme: widget.defaultTheme,
+                      songHasOwnTheme: widget.songHasOwnTheme,
+                      onThemeChanged: widget.onThemeChanged,
+                      onThemeReset: widget.onThemeReset,
+                      onMoveToDisplay: _hasSecondDisplay
+                          ? _moveToSecondDisplay
+                          : null,
+                      isOnSecondDisplay: _isOnSecondDisplay,
+                      timingLabel: _timingLabel,
+                      onRecordTiming: _startRecordingTiming,
+                      onRemoveTiming: _timingRemovable ? _removeTiming : null,
+                    ),
+                  ),
+                ),
+              if (_recordingTiming)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: TimingRecorder(
+                    script: _script,
+                    scrollEngine: _scrollEngine,
+                    replacesTiming: _timingLabel != null,
+                    onSave: _saveRecordedTiming,
+                    onCancel: _cancelRecordingTiming,
+                  ),
+                ),
+              if (_showFormatOverlay)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 400,
+                  child: FormatOverlay(
+                    script: _script,
+                    formatting: _formatting,
+                    onChanged: _onFormattingChanged,
+                    onClose: () => setState(() => _showFormatOverlay = false),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildCanvas([double? audioPositionSeconds]) {
+  Widget _buildCanvas() {
     return RepaintBoundary(
-        child: ListenableBuilder(
-          listenable: _scrollEngine,
-          builder: (context, _) {
-            final screenHeight = MediaQuery.of(context).size.height;
-            final anchorY = screenHeight * _settings.activeLineYOffset;
-            final lineHeight = _effectiveLineHeight;
-            final activeIdx = _scrollEngine.activeLineIndex;
-            final pixelOffset = _scrollEngine.pixelOffset;
-            final lines = _displayScript.allLines;
+      child: ListenableBuilder(
+        listenable: _scrollEngine,
+        builder: (context, _) {
+          final screenHeight = MediaQuery.of(context).size.height;
+          final anchorY = screenHeight * _settings.activeLineYOffset;
+          final lineHeight = _effectiveLineHeight;
+          final activeIdx = _scrollEngine.activeLineIndex;
+          final pixelOffset = _scrollEngine.pixelOffset;
+          final lines = _displayScript.allLines;
+          // Word-by-word highlight follows the song clock of a timed song
+          final songSeconds = _scrollEngine.isTimed
+              ? _scrollEngine.clockSeconds
+              : null;
 
-            return ClipRect(
-              child: Stack(
-                fit: StackFit.expand,
-                children: List.generate(lines.length, (i) {
-                  final y = anchorY + (i - activeIdx) * lineHeight -
-                      (pixelOffset - activeIdx * lineHeight);
+          return ClipRect(
+            child: Stack(
+              fit: StackFit.expand,
+              children: List.generate(lines.length, (i) {
+                final y =
+                    anchorY +
+                    (i - activeIdx) * lineHeight -
+                    (pixelOffset - activeIdx * lineHeight);
 
-                  if (y < -lineHeight * 2 ||
-                      y > screenHeight + lineHeight * 2) {
-                    return const SizedBox.shrink();
-                  }
+                if (y < -lineHeight * 2 || y > screenHeight + lineHeight * 2) {
+                  return const SizedBox.shrink();
+                }
 
-                  final distance = (i - activeIdx).abs();
-                  final proximity = distance == 0
-                      ? LineProximity.active
-                      : distance == 1
-                          ? LineProximity.near
-                          : distance <= 3
-                              ? LineProximity.mid
-                              : LineProximity.far;
+                final distance = (i - activeIdx).abs();
+                final proximity = distance == 0
+                    ? LineProximity.active
+                    : distance == 1
+                    ? LineProximity.near
+                    : distance <= 3
+                    ? LineProximity.mid
+                    : LineProximity.far;
 
-                  final isLoopBoundary = _scrollEngine.loopEnabled &&
-                      (i == _scrollEngine.loopStartLine ||
-                          i == _scrollEngine.loopEndLine);
+                final isLoopBoundary =
+                    _scrollEngine.loopEnabled &&
+                    (i == _scrollEngine.loopStartLine ||
+                        i == _scrollEngine.loopEndLine);
 
-                  // Karaoke: compute active word index for the active line
-                  int? activeWordIndex;
-                  if (i == activeIdx &&
-                      audioPositionSeconds != null &&
-                      lines[i].wordTimestamps != null) {
-                    final ts = lines[i].wordTimestamps!;
-                    activeWordIndex = ts.lastIndexWhere(
-                        (t) => audioPositionSeconds >= t);
-                    if (activeWordIndex < 0) activeWordIndex = 0;
-                  }
+                // Karaoke: compute active word index for the active line
+                int? activeWordIndex;
+                if (i == activeIdx &&
+                    songSeconds != null &&
+                    lines[i].wordTimestamps != null) {
+                  final ts = lines[i].wordTimestamps!;
+                  activeWordIndex = ts.lastIndexWhere((t) => songSeconds >= t);
+                  if (activeWordIndex < 0) activeWordIndex = 0;
+                }
 
-                  return Positioned(
-                    key: ValueKey(i),
-                    left: 48,
-                    right: 48,
-                    top: y,
-                    height: lineHeight,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.center,
-                      child: ScriptLineWidget(
-                        line: lines[i],
-                        lineIndex: i,
-                        proximity: proximity,
-                        fontSize: _settings.fontSize,
-                        isLoopBoundary: isLoopBoundary,
-                        displayFont: _settings.displayFont,
-                        formatting: _formatting,
-                        activeWordIndex: activeWordIndex,
-                        textAlignLeft: _settings.textAlignLeft,
-                        showHighlight: _settings.showActiveLineHighlight,
-                      ),
+                return Positioned(
+                  key: ValueKey(i),
+                  left: 48,
+                  right: 48,
+                  top: y,
+                  height: lineHeight,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.center,
+                    child: ScriptLineWidget(
+                      line: lines[i],
+                      lineIndex: i,
+                      proximity: proximity,
+                      fontSize: _settings.fontSize,
+                      isLoopBoundary: isLoopBoundary,
+                      displayFont: _settings.displayFont,
+                      formatting: _formatting,
+                      activeWordIndex: activeWordIndex,
+                      textAlignLeft: _settings.textAlignLeft,
+                      showHighlight: _settings.showActiveLineHighlight,
+                      theme: _songTheme,
                     ),
-                  );
-                }),
-              ),
-            );
-          },
-        ),
+                  ),
+                );
+              }),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -655,11 +872,13 @@ class _ProgressBar extends StatelessWidget {
   final ScrollEngine scrollEngine;
   final Script script;
   final ValueChanged<double> onSeek;
+  final Color accent;
 
   const _ProgressBar({
     required this.scrollEngine,
     required this.script,
     required this.onSeek,
+    required this.accent,
   });
 
   @override
@@ -689,24 +908,32 @@ class _ProgressBar extends StatelessWidget {
                     children: [
                       Flexible(
                         flex: (progress * 1000).round().clamp(1, 1000),
-                        child: Container(color: AppColors.accent.withValues(alpha: 0.7)),
+                        child: Container(
+                          color: accent.withValues(alpha: 0.7),
+                        ),
                       ),
                       Flexible(
                         flex: ((1 - progress) * 1000).round().clamp(1, 1000),
-                        child: Container(color: AppColors.surfaceElevated.withValues(alpha: 0.4)),
+                        child: Container(
+                          color: AppColors.surfaceElevated.withValues(
+                            alpha: 0.4,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
                 // Section tick marks
                 ...script.sections.skip(1).map((section) {
-                  final frac = scrollEngine.fractionForLine(section.startLineIndex);
+                  final frac = scrollEngine.fractionForLine(
+                    section.startLineIndex,
+                  );
                   return Align(
                     alignment: Alignment(0, frac * 2 - 1),
                     child: Container(
                       width: 8,
                       height: 2,
-                      color: AppColors.sectionHeader.withValues(alpha: 0.6),
+                      color: AppColors.uiHint.withValues(alpha: 0.6),
                     ),
                   );
                 }),
@@ -729,10 +956,12 @@ class _ProgressBar extends StatelessWidget {
 class _AudioPositionBar extends StatelessWidget {
   final AudioService audioService;
   final ScrollEngine scrollEngine;
+  final Color accent;
 
   const _AudioPositionBar({
     required this.audioService,
     required this.scrollEngine,
+    required this.accent,
   });
 
   @override
@@ -751,19 +980,23 @@ class _AudioPositionBar extends StatelessWidget {
         stream: audioService.positionStream,
         builder: (context, snap) {
           final pos = snap.data ?? Duration.zero;
-          final progress =
-              (pos.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+          final progress = (pos.inMilliseconds / duration.inMilliseconds).clamp(
+            0.0,
+            1.0,
+          );
           return Column(
             children: [
               Flexible(
                 flex: (progress * 1000).round(),
                 child: Container(
-                    color: AppColors.accent.withValues(alpha: 0.5)),
+                  color: accent.withValues(alpha: 0.5),
+                ),
               ),
               Flexible(
                 flex: ((1 - progress) * 1000).round().clamp(1, 1000),
                 child: Container(
-                    color: AppColors.surfaceElevated.withValues(alpha: 0.3)),
+                  color: AppColors.surfaceElevated.withValues(alpha: 0.3),
+                ),
               ),
             ],
           );
@@ -844,18 +1077,18 @@ class _ClockOverlayState extends State<_ClockOverlay> {
           Text(
             clockStr,
             style: const TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.mono,
               fontSize: 13,
-              color: AppColors.sectionHeader,
+              color: AppColors.uiHint,
               letterSpacing: 1,
             ),
           ),
           Text(
             '$mm:$ss',
             style: const TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.mono,
               fontSize: 11,
-              color: AppColors.dimmedLine,
+              color: AppColors.uiHint,
               letterSpacing: 1,
             ),
           ),
@@ -898,87 +1131,72 @@ class _DurationDialogState extends State<_DurationDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppColors.surface,
-      title: const Text(
-        'Song Duration',
-        style: TextStyle(
-          fontFamily: AppTextStyles.fontFamily,
-          fontSize: 14,
-          color: AppColors.activeLine,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Enter the song length — scroll speed will be set so the lyrics finish exactly on cue.',
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: 12,
-              color: AppColors.sectionHeader,
-              height: 1.5,
+      title: const Text('Song duration'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Enter the song length — scroll speed will be set so the lyrics finish exactly on cue.',
+              style: TextStyle(
+                fontFamily: AppTextStyles.ui,
+                fontSize: 14,
+                color: AppColors.uiText,
+                height: 1.5,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _ctrl,
-            autofocus: true,
-            style: const TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: 22,
-              color: AppColors.activeLine,
-              letterSpacing: 2,
-            ),
-            textAlign: TextAlign.center,
-            decoration: InputDecoration(
-              hintText: 'M:SS',
-              hintStyle: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+            const SizedBox(height: 16),
+            TextField(
+              controller: _ctrl,
+              autofocus: true,
+              style: const TextStyle(
+                fontFamily: AppTextStyles.mono,
                 fontSize: 22,
-                color: AppColors.dimmedLine,
+                color: AppColors.textPrimary,
+                letterSpacing: 2,
               ),
-              filled: true,
-              fillColor: AppColors.surfaceElevated,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
+              textAlign: TextAlign.center,
+              decoration: InputDecoration(
+                hintText: 'M:SS',
+                hintStyle: const TextStyle(
+                  fontFamily: AppTextStyles.mono,
+                  fontSize: 22,
+                  color: AppColors.uiHint,
+                ),
+                filled: true,
+                fillColor: AppColors.surfaceSelected,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: AppColors.accent.withValues(alpha: 0.7),
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 12),
+              onSubmitted: (_) => _confirm(),
             ),
-            onSubmitted: (_) => _confirm(),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(
-            'Cancel',
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              color: AppColors.sectionHeader,
-            ),
-          ),
+          child: const Text('Cancel'),
         ),
-        ElevatedButton(
-          onPressed: _confirm,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.accent,
-            foregroundColor: Colors.black,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8)),
-          ),
-          child: const Text(
-            'Set Speed',
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
+        ElevatedButton(onPressed: _confirm, child: const Text('Set speed')),
       ],
     );
   }
@@ -993,9 +1211,49 @@ class _DurationDialogState extends State<_DurationDialog> {
 
 // ── Countdown overlay ─────────────────────────────────────────────────────────
 
+// ── Short notice at the top ───────────────────────────────────────────────────
+
+class _TopNotice extends StatelessWidget {
+  final String text;
+  const _TopNotice({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 24,
+      left: 80,
+      right: 80,
+      child: IgnorePointer(
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated.withValues(alpha: 0.95),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppColors.accent.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Text(
+              text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: AppTextStyles.ui,
+                fontSize: 13,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CountdownOverlay extends StatelessWidget {
   final int value;
-  const _CountdownOverlay({required this.value});
+  final Color accent;
+  const _CountdownOverlay({required this.value, required this.accent});
 
   @override
   Widget build(BuildContext context) {
@@ -1005,19 +1263,20 @@ class _CountdownOverlay extends StatelessWidget {
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
             transitionBuilder: (child, anim) => ScaleTransition(
-              scale: Tween<double>(begin: 1.4, end: 1.0).animate(
-                CurvedAnimation(parent: anim, curve: Curves.easeOut),
-              ),
+              scale: Tween<double>(
+                begin: 1.4,
+                end: 1.0,
+              ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
               child: FadeTransition(opacity: anim, child: child),
             ),
             child: Text(
               '$value',
               key: ValueKey(value),
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.display,
                 fontSize: 160,
                 fontWeight: FontWeight.w900,
-                color: AppColors.accent.withValues(alpha: 0.85),
+                color: accent.withValues(alpha: 0.85),
                 letterSpacing: -4,
               ),
             ),

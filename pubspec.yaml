@@ -31,6 +31,12 @@ dependencies:
   # HTTP client for LRCLIB lyrics search
   http: ^1.2.0
 
+  # QR code for the phone remote, drawn offline
+  qr_flutter: ^4.1.0
+
+  # Keeps the display awake while a song is on screen
+  wakelock_plus: ^1.5.2
+
   cupertino_icons: ^1.0.8
 
 dependency_overrides:
@@ -64,6 +70,16 @@ flutter:
     - assets/logo/
 
   fonts:
+    # Interface text (OFL, assets/fonts/Manrope-OFL.txt)
+    - family: AppSans
+      fonts:
+        - asset: assets/fonts/Manrope-Regular.ttf
+        - asset: assets/fonts/Manrope-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Manrope-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Manrope-Bold.ttf
+          weight: 700
     - family: TeleprompterMono
       fonts:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf

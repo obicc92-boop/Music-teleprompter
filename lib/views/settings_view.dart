@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import '../services/settings_service.dart';
 import '../utils/constants.dart';
+import '../widgets/theme_picker.dart';
 
 export '../utils/constants.dart' show DisplayFont;
 
-enum _Section { display, playback, controls, shortcuts }
+enum SettingsSection { display, playback, controls, shortcuts }
 
 class SettingsView extends StatefulWidget {
   final AppSettings settings;
@@ -15,6 +16,7 @@ class SettingsView extends StatefulWidget {
   final void Function(AppSettings) onChanged;
   final VoidCallback onResetSong;
   final VoidCallback onClose;
+  final SettingsSection initialSection;
 
   const SettingsView({
     super.key,
@@ -24,6 +26,7 @@ class SettingsView extends StatefulWidget {
     required this.onChanged,
     required this.onResetSong,
     required this.onClose,
+    this.initialSection = SettingsSection.display,
   });
 
   @override
@@ -32,7 +35,7 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   late AppSettings _settings;
-  _Section _section = _Section.display;
+  late SettingsSection _section;
 
   bool get _forSong => widget.songTitle != null;
 
@@ -40,6 +43,7 @@ class _SettingsViewState extends State<SettingsView> {
   void initState() {
     super.initState();
     _settings = widget.settings;
+    _section = widget.initialSection;
   }
 
   @override
@@ -58,25 +62,30 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
-    final maxHeight = MediaQuery.of(context).size.height - 80;
+    // Same size on every tab, so the tabs don't move under the pointer
+    final height = (MediaQuery.of(context).size.height - 80).clamp(0.0, 640.0);
     return Material(
       color: AppColors.surface,
-      borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 560),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _Sidebar(
-                selected: _section,
-                onSelected: (s) => setState(() => _section = s),
-              ),
-              _VerticalDivider(),
-              Expanded(child: _buildContent()),
-            ],
-          ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      elevation: 24,
+      shadowColor: Colors.black,
+      child: SizedBox(
+        width: 588,
+        height: height,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _Sidebar(
+              selected: _section,
+              onSelected: (s) => setState(() => _section = s),
+            ),
+            _VerticalDivider(),
+            Expanded(child: _buildContent()),
+          ],
         ),
       ),
     );
@@ -89,14 +98,14 @@ class _SettingsViewState extends State<SettingsView> {
       children: [
         _ContentHeader(
           title: switch (_section) {
-            _Section.display   => 'Display',
-            _Section.playback  => 'Playback',
-            _Section.controls  => 'Controls',
-            _Section.shortcuts => 'Keyboard Shortcuts',
+            SettingsSection.display   => 'Display',
+            SettingsSection.playback  => 'Playback',
+            SettingsSection.controls  => 'Controls',
+            SettingsSection.shortcuts => 'Keyboard Shortcuts',
           },
           onClose: widget.onClose,
         ),
-        if (_section == _Section.display || _section == _Section.playback)
+        if (_section == SettingsSection.display || _section == SettingsSection.playback)
           _ScopeBar(
             songTitle: widget.songTitle,
             canReset: widget.songHasOwnSettings,
@@ -106,10 +115,10 @@ class _SettingsViewState extends State<SettingsView> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
             child: switch (_section) {
-              _Section.display   => _displayPanel(),
-              _Section.playback  => _playbackPanel(),
-              _Section.controls  => _controlsPanel(),
-              _Section.shortcuts => _shortcutsPanel(),
+              SettingsSection.display   => _displayPanel(),
+              SettingsSection.playback  => _playbackPanel(),
+              SettingsSection.controls  => _controlsPanel(),
+              SettingsSection.shortcuts => _shortcutsPanel(),
             },
           ),
         ),
@@ -123,6 +132,19 @@ class _SettingsViewState extends State<SettingsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _SettingRow(
+          label: 'Colour Theme',
+          sublabel: 'Background and highlight colour behind the lyrics',
+          child: LayoutBuilder(
+            builder: (context, constraints) => ThemePicker(
+              width: constraints.maxWidth,
+              value: _settings.songTheme,
+              onChanged: (theme) =>
+                  _update(_settings.copyWith(colorTheme: theme.code)),
+            ),
+          ),
+        ),
+        _Divider(),
         _SettingRow(
           label: 'Font Size',
           trailing: _ValueBadge('${_settings.fontSize.round()} px'),
@@ -198,12 +220,18 @@ class _SettingsViewState extends State<SettingsView> {
       children: [
         _SettingRow(
           label: _forSong ? 'Speed' : 'Default Speed',
-          trailing: _ValueBadge('${_settings.scrollSpeedMultiplier.toStringAsFixed(1)}×'),
+          trailing: _ValueBadge(
+              ScrollConstants.speedLabel(_settings.scrollSpeedMultiplier)),
           child: _styledSlider(
             value: _settings.scrollSpeedMultiplier,
             min: ScrollConstants.minSpeedMultiplier,
             max: ScrollConstants.maxSpeedMultiplier,
-            onChanged: (v) => _update(_settings.copyWith(scrollSpeedMultiplier: v)),
+            divisions: ((ScrollConstants.maxSpeedMultiplier -
+                        ScrollConstants.minSpeedMultiplier) /
+                    ScrollConstants.speedStep)
+                .round(),
+            onChanged: (v) => _update(_settings.copyWith(
+                scrollSpeedMultiplier: (v * 100).round() / 100)),
           ),
         ),
         _Divider(),
@@ -269,9 +297,9 @@ class _SettingsViewState extends State<SettingsView> {
         _ShortcutGroup(
           title: 'Playback',
           rows: const [
-            ('Space', 'Play / Pause'),
-            ('+ / −', 'Speed up / Slow down'),
-            ('T', 'Tap Tempo'),
+            ('Space', 'Play / pause'),
+            ('+ / −', 'Speed up / slow down'),
+            ('T', 'Tap tempo'),
             ('R', 'Reset to start'),
             ('L', 'Toggle loop section'),
           ],
@@ -280,8 +308,8 @@ class _SettingsViewState extends State<SettingsView> {
         _ShortcutGroup(
           title: 'Navigation',
           rows: const [
-            ('↑ / ↓', 'Scroll up / Scroll down'),
-            ('→ / ←', 'Next / Previous section'),
+            ('↑ / ↓', 'Scroll up / down'),
+            ('→ / ←', 'Next / previous section'),
             ('N', 'Next song'),
             ('P', 'Previous song'),
           ],
@@ -344,16 +372,16 @@ class _SettingsViewState extends State<SettingsView> {
 // ── Sidebar ────────────────────────────────────────────────────────────────
 
 class _Sidebar extends StatelessWidget {
-  final _Section selected;
-  final ValueChanged<_Section> onSelected;
+  final SettingsSection selected;
+  final ValueChanged<SettingsSection> onSelected;
 
   const _Sidebar({required this.selected, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 116,
-      color: AppColors.surface,
+      width: 144,
+      color: AppColors.sidebar,
       padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -362,26 +390,26 @@ class _Sidebar extends StatelessWidget {
           _SidebarItem(
             icon: Icons.text_fields_rounded,
             label: 'Display',
-            selected: selected == _Section.display,
-            onTap: () => onSelected(_Section.display),
+            selected: selected == SettingsSection.display,
+            onTap: () => onSelected(SettingsSection.display),
           ),
           _SidebarItem(
             icon: Icons.tune_rounded,
             label: 'Playback',
-            selected: selected == _Section.playback,
-            onTap: () => onSelected(_Section.playback),
+            selected: selected == SettingsSection.playback,
+            onTap: () => onSelected(SettingsSection.playback),
           ),
           _SidebarItem(
             icon: Icons.keyboard_rounded,
             label: 'Controls',
-            selected: selected == _Section.controls,
-            onTap: () => onSelected(_Section.controls),
+            selected: selected == SettingsSection.controls,
+            onTap: () => onSelected(SettingsSection.controls),
           ),
           _SidebarItem(
             icon: Icons.keyboard_alt_outlined,
             label: 'Shortcuts',
-            selected: selected == _Section.shortcuts,
-            onTap: () => onSelected(_Section.shortcuts),
+            selected: selected == SettingsSection.shortcuts,
+            onTap: () => onSelected(SettingsSection.shortcuts),
           ),
         ],
       ),
@@ -404,7 +432,7 @@ class _SidebarItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppColors.accent : AppColors.sectionHeader;
+    final color = selected ? AppColors.textPrimary : AppColors.uiText;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -412,22 +440,24 @@ class _SidebarItem extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: selected
-              ? AppColors.accent.withValues(alpha: 0.12)
-              : Colors.transparent,
+          color: selected ? AppColors.surfaceSelected : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: color),
+            Icon(icon, size: 16, color: selected ? AppColors.accentText : color),
             const SizedBox(width: 10),
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-                color: color,
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: AppTextStyles.ui,
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: color,
+                ),
               ),
             ),
           ],
@@ -454,17 +484,17 @@ class _ContentHeader extends StatelessWidget {
           Text(
             title,
             style: const TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.ui,
               fontSize: 15,
               fontWeight: FontWeight.w700,
-              color: AppColors.activeLine,
+              color: AppColors.textPrimary,
               letterSpacing: 0.3,
             ),
           ),
           const Spacer(),
           IconButton(
             icon: const Icon(Icons.close_rounded, size: 18),
-            color: AppColors.sectionHeader,
+            color: AppColors.uiHint,
             onPressed: onClose,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
@@ -504,7 +534,7 @@ class _ScopeBar extends StatelessWidget {
           Icon(
             forSong ? Icons.music_note_rounded : Icons.tune_rounded,
             size: 15,
-            color: forSong ? AppColors.accent : AppColors.sectionHeader,
+            color: forSong ? AppColors.accent : AppColors.uiHint,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -516,10 +546,10 @@ class _ScopeBar extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
+                    fontFamily: AppTextStyles.ui,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.activeLine,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -528,9 +558,9 @@ class _ScopeBar extends StatelessWidget {
                       ? 'Speed and display changes are saved for this song'
                       : 'Used by every song that has no settings of its own',
                   style: const TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
+                    fontFamily: AppTextStyles.ui,
                     fontSize: 10,
-                    color: AppColors.sectionHeader,
+                    color: AppColors.uiHint,
                     height: 1.4,
                   ),
                 ),
@@ -554,19 +584,19 @@ class _ScopeBar extends StatelessWidget {
                     border: Border.all(
                       color: canReset
                           ? AppColors.accent
-                          : AppColors.dimmedLine,
+                          : AppColors.uiHint.withValues(alpha: 0.45),
                       width: 1.5,
                     ),
                   ),
                   child: Text(
                     'Reset to default',
                     style: TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.ui,
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: canReset
                           ? AppColors.accent
-                          : AppColors.dimmedLine,
+                          : AppColors.uiHint.withValues(alpha: 0.45),
                     ),
                   ),
                 ),
@@ -610,10 +640,10 @@ class _SettingRow extends StatelessWidget {
                     Text(
                       label,
                       style: const TextStyle(
-                        fontFamily: AppTextStyles.fontFamily,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.inactiveLine,
+                        fontFamily: AppTextStyles.ui,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                     if (sublabel != null) ...[
@@ -621,9 +651,9 @@ class _SettingRow extends StatelessWidget {
                       Text(
                         sublabel!,
                         style: const TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
+                          fontFamily: AppTextStyles.ui,
                           fontSize: 10,
-                          color: AppColors.sectionHeader,
+                          color: AppColors.uiHint,
                           height: 1.4,
                         ),
                       ),
@@ -669,10 +699,10 @@ class _ToggleRow extends StatelessWidget {
                 Text(
                   label,
                   style: const TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.inactiveLine,
+                    fontFamily: AppTextStyles.ui,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 if (sublabel != null) ...[
@@ -680,9 +710,9 @@ class _ToggleRow extends StatelessWidget {
                   Text(
                     sublabel!,
                     style: const TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.ui,
                       fontSize: 10,
-                      color: AppColors.sectionHeader,
+                      color: AppColors.uiHint,
                       height: 1.4,
                     ),
                   ),
@@ -693,10 +723,6 @@ class _ToggleRow extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeThumbColor: AppColors.accent,
-            activeTrackColor: AppColors.accent.withValues(alpha: 0.35),
-            inactiveThumbColor: AppColors.sectionHeader,
-            inactiveTrackColor: AppColors.surfaceElevated,
           ),
         ],
       ),
@@ -711,7 +737,7 @@ class _VerticalDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 1,
-      color: AppColors.surfaceElevated,
+      color: AppColors.hairline,
     );
   }
 }
@@ -721,7 +747,7 @@ class _Divider extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 1,
-      color: AppColors.surfaceElevated,
+      color: AppColors.hairline,
     );
   }
 }
@@ -741,9 +767,9 @@ class _ValueBadge extends StatelessWidget {
       child: Text(
         text,
         style: const TextStyle(
-          fontFamily: AppTextStyles.fontFamily,
+          fontFamily: AppTextStyles.mono,
           fontSize: 11,
-          color: AppColors.sectionHeader,
+          color: AppColors.uiHint,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -771,21 +797,21 @@ class _Chip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
           color: selected
-              ? AppColors.accent.withValues(alpha: 0.14)
-              : AppColors.surfaceElevated,
+              ? AppColors.accentSoft
+              : AppColors.surfaceSelected,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: selected ? AppColors.accent : Colors.transparent,
+            color: selected ? AppColors.accent : AppColors.border,
             width: 1.5,
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 12,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
-            color: selected ? AppColors.accent : AppColors.inactiveLine,
+            color: selected ? AppColors.accentText : AppColors.uiText,
           ),
         ),
       ),
@@ -813,11 +839,11 @@ class _FontChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: selected
-              ? AppColors.accent.withValues(alpha: 0.14)
-              : AppColors.surfaceElevated,
+              ? AppColors.accentSoft
+              : AppColors.surfaceSelected,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: selected ? AppColors.accent : Colors.transparent,
+            color: selected ? AppColors.accent : AppColors.border,
             width: 1.5,
           ),
         ),
@@ -830,17 +856,17 @@ class _FontChip extends StatelessWidget {
                 fontFamily: font.family,
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
-                color: selected ? AppColors.accent : AppColors.inactiveLine,
+                color: selected ? AppColors.accentText : AppColors.uiText,
               ),
             ),
             const SizedBox(height: 3),
             Text(
               font.label,
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 fontSize: 9,
                 letterSpacing: 0.5,
-                color: selected ? AppColors.accent : AppColors.sectionHeader,
+                color: selected ? AppColors.accent : AppColors.uiHint,
               ),
             ),
           ],
@@ -864,10 +890,10 @@ class _ShortcutGroup extends StatelessWidget {
         Text(
           title.toUpperCase(),
           style: const TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 9,
             fontWeight: FontWeight.w700,
-            color: AppColors.sectionHeader,
+            color: AppColors.uiHint,
             letterSpacing: 1.2,
           ),
         ),
@@ -891,15 +917,15 @@ class _ShortcutGroup extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: AppColors.surface,
                           borderRadius: BorderRadius.circular(5),
-                          border: Border.all(color: AppColors.sectionHeader.withValues(alpha: 0.3), width: 1),
+                          border: Border.all(color: AppColors.uiHint.withValues(alpha: 0.3), width: 1),
                         ),
                         child: Text(
                           rows[i].$1,
                           style: const TextStyle(
-                            fontFamily: AppTextStyles.fontFamily,
+                            fontFamily: AppTextStyles.mono,
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: AppColors.inactiveLine,
+                            color: AppColors.uiText,
                           ),
                         ),
                       ),
@@ -908,9 +934,9 @@ class _ShortcutGroup extends StatelessWidget {
                         child: Text(
                           rows[i].$2,
                           style: const TextStyle(
-                            fontFamily: AppTextStyles.fontFamily,
+                            fontFamily: AppTextStyles.ui,
                             fontSize: 12,
-                            color: AppColors.inactiveLine,
+                            color: AppColors.uiText,
                           ),
                         ),
                       ),
@@ -949,14 +975,14 @@ class _HintBox extends StatelessWidget {
                     children: [
                       const Text('·  ',
                           style: TextStyle(
-                              color: AppColors.sectionHeader, fontSize: 11)),
+                              color: AppColors.uiHint, fontSize: 11)),
                       Expanded(
                         child: Text(
                           l,
                           style: const TextStyle(
-                            fontFamily: AppTextStyles.fontFamily,
+                            fontFamily: AppTextStyles.ui,
                             fontSize: 11,
-                            color: AppColors.sectionHeader,
+                            color: AppColors.uiHint,
                             height: 1.5,
                           ),
                         ),

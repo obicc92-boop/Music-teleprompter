@@ -8,6 +8,30 @@ class LrcLine {
 }
 
 class LrcService {
+  /// Marks timing recorded in this app's rehearsal mode, so it can be told
+  /// apart from synced lyrics found online. LRC readers ignore [re:] tags.
+  static const rehearsalTag = '[re:Music Teleprompter rehearsal]';
+
+  static bool isRehearsalTiming(String content) =>
+      content.contains(rehearsalTag);
+
+  /// Writes (line text, start time) pairs as LRC — the same format online
+  /// synced lyrics use, so both kinds of timing play back the same way.
+  static String toLrc(List<(String, Duration)> lines, {bool rehearsal = false}) {
+    String stamp(Duration d) {
+      final minutes = d.inMinutes.toString().padLeft(2, '0');
+      final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
+      final hundredths =
+          ((d.inMilliseconds % 1000) ~/ 10).toString().padLeft(2, '0');
+      return '[$minutes:$seconds.$hundredths]';
+    }
+
+    return [
+      if (rehearsal) rehearsalTag,
+      for (final (text, time) in lines) '${stamp(time)}$text',
+    ].join('\n');
+  }
+
   static List<LrcLine> parseFile(String path) {
     final content = File(path).readAsStringSync();
     return parse(content);

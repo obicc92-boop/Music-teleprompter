@@ -65,11 +65,13 @@ class SyncEngine extends ChangeNotifier {
   }
 
   void setManualMultiplier(double value) {
+    final clamped = value.clamp(
+      ScrollConstants.minSpeedMultiplier,
+      ScrollConstants.maxSpeedMultiplier,
+    );
+    // Hundredths keep repeated steps exact (1.05, not 1.0500000000000003)
     _updateState(_state.copyWith(
-      manualMultiplier: value.clamp(
-        ScrollConstants.minSpeedMultiplier,
-        ScrollConstants.maxSpeedMultiplier,
-      ),
+      manualMultiplier: (clamped * 100).round() / 100,
     ));
   }
 

@@ -95,7 +95,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
       color: AppColors.surface,
       child: Container(
         decoration: const BoxDecoration(
-          border: Border(left: BorderSide(color: AppColors.surfaceElevated)),
+          border: Border(left: BorderSide(color: AppColors.hairline)),
         ),
         child: Column(
           children: [
@@ -112,16 +112,16 @@ class _FormatOverlayState extends State<FormatOverlay> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.surfaceElevated)),
+        border: Border(bottom: BorderSide(color: AppColors.hairline)),
       ),
       child: Row(
         children: [
           const Text(
             'FORMAT LYRICS',
             style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.ui,
               fontSize: 11,
-              color: AppColors.activeLine,
+              color: AppColors.textPrimary,
               letterSpacing: 2,
               fontWeight: FontWeight.w700,
             ),
@@ -132,7 +132,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
             child: const Text(
               'Done',
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 color: AppColors.accent,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -160,9 +160,9 @@ class _FormatOverlayState extends State<FormatOverlay> {
         child: Text(
           line.sectionLabel ?? line.text,
           style: const TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 10,
-            color: AppColors.sectionHeader,
+            color: AppColors.uiHint,
             letterSpacing: 2,
           ),
         ),
@@ -199,7 +199,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
                   color: isSelected
                       ? AppColors.accent
                       : (fmt != null
-                          ? AppColors.sectionHeader.withValues(alpha: 0.35)
+                          ? AppColors.uiHint.withValues(alpha: 0.35)
                           : Colors.transparent),
                   width: isSelected ? 1.5 : 1.0,
                 ),
@@ -221,7 +221,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
                   Text(
                     word,
                     style: TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.mono,
                       fontSize: 15,
                       fontWeight: fmt?.bold == true
                           ? FontWeight.w700
@@ -230,7 +230,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
                           ? Color(fmt!.colorValue!)
                           : (isSelected
                               ? AppColors.accent
-                              : AppColors.inactiveLine),
+                              : AppColors.uiText),
                     ),
                   ),
                   if (fmt != null && fmt.fontSizeScale > 1.0)
@@ -239,9 +239,9 @@ class _FormatOverlayState extends State<FormatOverlay> {
                       child: Text(
                         'A+',
                         style: TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
+                          fontFamily: AppTextStyles.ui,
                           fontSize: 7,
-                          color: AppColors.sectionHeader,
+                          color: AppColors.uiHint,
                         ),
                       ),
                     ),
@@ -260,7 +260,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
       decoration: const BoxDecoration(
         color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.surfaceElevated)),
+        border: Border(top: BorderSide(color: AppColors.hairline)),
       ),
       child: hasSelection
           ? _buildActiveToolbar()
@@ -270,9 +270,9 @@ class _FormatOverlayState extends State<FormatOverlay> {
                 child: Text(
                   'Tap any word to format it',
                   style: TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
+                    fontFamily: AppTextStyles.ui,
                     fontSize: 13,
-                    color: AppColors.sectionHeader,
+                    color: AppColors.uiHint,
                   ),
                 ),
               ),
@@ -295,9 +295,9 @@ class _FormatOverlayState extends State<FormatOverlay> {
               child: Text(
                 'Color',
                 style: TextStyle(
-                  fontFamily: AppTextStyles.fontFamily,
+                  fontFamily: AppTextStyles.ui,
                   fontSize: 11,
-                  color: AppColors.sectionHeader,
+                  color: AppColors.uiHint,
                 ),
               ),
             ),
@@ -305,7 +305,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
               final (colorValue, label) = option;
               final isSelected = fmt?.colorValue == colorValue;
               final displayColor =
-                  colorValue != null ? Color(colorValue) : AppColors.activeLine;
+                  colorValue != null ? Color(colorValue) : AppColors.textPrimary;
 
               return Padding(
                 padding: const EdgeInsets.only(right: 10),
@@ -349,9 +349,9 @@ class _FormatOverlayState extends State<FormatOverlay> {
               child: Text(
                 'Style',
                 style: TextStyle(
-                  fontFamily: AppTextStyles.fontFamily,
+                  fontFamily: AppTextStyles.ui,
                   fontSize: 11,
-                  color: AppColors.sectionHeader,
+                  color: AppColors.uiHint,
                 ),
               ),
             ),
@@ -388,9 +388,9 @@ class _FormatOverlayState extends State<FormatOverlay> {
         child: Text(
           label,
           style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 12,
-            color: isSelected ? AppColors.accent : AppColors.inactiveLine,
+            color: isSelected ? AppColors.accent : AppColors.uiText,
           ),
         ),
       ),
@@ -416,10 +416,10 @@ class _FormatOverlayState extends State<FormatOverlay> {
         child: Text(
           'B',
           style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 13,
             fontWeight: FontWeight.w700,
-            color: isBold ? AppColors.accent : AppColors.inactiveLine,
+            color: isBold ? AppColors.accent : AppColors.uiText,
           ),
         ),
       ),
@@ -440,7 +440,7 @@ class _FormatOverlayState extends State<FormatOverlay> {
         child: const Text(
           'Clear',
           style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 12,
             color: Color(0xFFEF5350),
           ),

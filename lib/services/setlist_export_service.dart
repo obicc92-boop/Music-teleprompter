@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import '../models/setlist_models.dart';
+import '../utils/constants.dart';
 import 'song_settings_store.dart';
 
 class SetlistExportService {
@@ -40,7 +41,7 @@ class SetlistExportService {
         songNumber++;
         final songSpeed = songSpeeds[item.title];
         final speed =
-            songSpeed != null ? '${songSpeed.toStringAsFixed(1)}×' : '—';
+            songSpeed != null ? ScrollConstants.speedLabel(songSpeed) : '—';
         final hex = '#${(item.colorValue & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
         songRows.write('''
           <tr>

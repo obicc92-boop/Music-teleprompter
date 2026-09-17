@@ -21,6 +21,20 @@ class ScrollEngine extends ChangeNotifier {
   VoidCallback? onEndReached;
   bool _endFired = false;
 
+  // Timed playback: with a timeline (line → time into the song) the scroll
+  // follows the song's clock instead of a fixed speed. Any manual move
+  // (keys, pedal, progress bar) re-syncs the clock to the new position,
+  // which is how a performer catches up when the band drifts.
+  List<(int, double)> _timeline = const []; // (line, seconds), both ascending
+  double _clock = 0.0;
+
+  /// When set (e.g. a backing track's position), timed playback follows it
+  /// instead of its own clock.
+  double Function()? externalClock;
+
+  /// Called with the new song time after a manual move in timed playback.
+  void Function(double seconds)? onSeek;
+
   Ticker? _ticker;
   Duration _lastTickTime = Duration.zero;
 
@@ -29,6 +43,8 @@ class ScrollEngine extends ChangeNotifier {
   bool get loopEnabled => _loopEnabled;
   int get loopStartLine => _loopStartLine;
   int get loopEndLine => _loopEndLine;
+  bool get isTimed => _timeline.isNotEmpty;
+  double get clockSeconds => _clock;
 
   ScrollEngine({required SyncEngine syncEngine}) : _syncEngine = syncEngine;
 
@@ -67,6 +83,113 @@ class ScrollEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Timed playback ─────────────────────────────────────────────────────────
+
+  /// Follows [timeline] from now on, keeping the current position.
+  void setTimeline(List<(int, Duration)> timeline) {
+    final points = <(int, double)>[];
+    for (final (line, time) in timeline) {
+      final t = time.inMicroseconds / 1e6;
+      if (points.isNotEmpty && (line <= points.last.$1 || t < points.last.$2)) {
+        continue; // keep it moving forward in both line and time
+      }
+      points.add((line, t));
+    }
+    // Lines before the first timed one (e.g. an intro header) start at 0:00
+    if (points.isNotEmpty && points.first.$1 > 0) {
+      points.insert(0, (0, 0.0));
+    }
+    _timeline = points;
+    _endFired = false;
+    if (isTimed) _clock = _timeAtLine(_pixelOffset / _lineHeight);
+    notifyListeners();
+  }
+
+  void clearTimeline() {
+    _timeline = const [];
+    notifyListeners();
+  }
+
+  // Lines after the last timed one keep the timeline's average pace
+  double get _secondsPerLine {
+    final first = _timeline.first;
+    final last = _timeline.last;
+    final lines = last.$1 - first.$1;
+    return lines > 0 && last.$2 > first.$2 ? (last.$2 - first.$2) / lines : 3.0;
+  }
+
+  double _lineAtTime(double t) {
+    final tl = _timeline;
+    if (t <= tl.first.$2) return tl.first.$1.toDouble();
+    for (var k = 0; k < tl.length - 1; k++) {
+      final (la, ta) = tl[k];
+      final (lb, tb) = tl[k + 1];
+      if (t < tb) {
+        final f = tb > ta ? (t - ta) / (tb - ta) : 1.0;
+        return la + (lb - la) * f;
+      }
+    }
+    return tl.last.$1 + (t - tl.last.$2) / _secondsPerLine;
+  }
+
+  double _timeAtLine(double line) {
+    final tl = _timeline;
+    if (line <= tl.first.$1) return tl.first.$2;
+    for (var k = 0; k < tl.length - 1; k++) {
+      final (la, ta) = tl[k];
+      final (lb, tb) = tl[k + 1];
+      if (line < lb) return ta + (tb - ta) * (line - la) / (lb - la);
+    }
+    return tl.last.$2 + (line - tl.last.$1) * _secondsPerLine;
+  }
+
+  void _tickTimed(double dt) {
+    final script = _script;
+    if (script == null || script.isEmpty) return;
+    final external = externalClock;
+    if (external != null) {
+      _clock = external();
+    } else if (_syncEngine.isPlaying) {
+      _clock += dt;
+    } else {
+      return;
+    }
+
+    final lastLine = script.totalLines - 1;
+    if (_loopEnabled && _lineAtTime(_clock) >= _loopEndLine) {
+      _clock = _timeAtLine(_loopStartLine.toDouble());
+      onSeek?.call(_clock);
+    }
+
+    final line = _lineAtTime(_clock).clamp(0.0, lastLine.toDouble());
+    _pixelOffset = line * _lineHeight;
+    // A line lights up when its time comes, not halfway there
+    _activeLineIndex = (line + 0.001).floor().clamp(0, lastLine);
+
+    if (!_loopEnabled && !_endFired && _clock >= _endTime) {
+      _endFired = true;
+      onEndReached?.call();
+    }
+    notifyListeners();
+  }
+
+  // The last line still needs singing: the song ends a line's length after it
+  double get _endTime {
+    final lastLine = (_script?.totalLines ?? 1) - 1;
+    return _timeAtLine(lastLine.toDouble()) +
+        (_secondsPerLine < 3.0 ? 3.0 : _secondsPerLine);
+  }
+
+  // After a manual move, the song clock jumps to match the new position
+  void _syncClockToPosition() {
+    if (!isTimed) return;
+    _clock = _timeAtLine(_pixelOffset / _lineHeight);
+    if (_clock < _endTime) _endFired = false; // moved back: it can end again
+    onSeek?.call(_clock);
+  }
+
+  // ── Ticking ────────────────────────────────────────────────────────────────
+
   void _onTick(Duration elapsed) {
     if (!_isRunning) return;
 
@@ -74,6 +197,11 @@ class ScrollEngine extends ChangeNotifier {
         ? 0.0
         : (elapsed - _lastTickTime).inMicroseconds / 1000000.0;
     _lastTickTime = elapsed;
+
+    if (isTimed) {
+      _tickTimed(dt);
+      return;
+    }
 
     final deltaPixels = _syncEngine.tickScrollSpeed(dt);
     if (deltaPixels.abs() < 0.001) return;
@@ -112,6 +240,7 @@ class ScrollEngine extends ChangeNotifier {
     if (script == null) return;
     _activeLineIndex = lineIndex.clamp(0, script.totalLines - 1);
     _pixelOffset = _activeLineIndex * _lineHeight;
+    _syncClockToPosition();
     notifyListeners();
   }
 
@@ -139,6 +268,7 @@ class ScrollEngine extends ChangeNotifier {
     _pixelOffset = (_pixelOffset + delta).clamp(0.0, maxOffset);
     _activeLineIndex =
         (_pixelOffset / _lineHeight).round().clamp(0, script.totalLines - 1);
+    _syncClockToPosition();
     notifyListeners();
   }
 
@@ -174,6 +304,7 @@ class ScrollEngine extends ChangeNotifier {
     _pixelOffset = (fraction.clamp(0.0, 1.0) * maxOffset);
     _activeLineIndex = (_pixelOffset / _lineHeight).round().clamp(0, script.totalLines - 1);
     _endFired = false;
+    _syncClockToPosition();
     notifyListeners();
   }
 
@@ -190,6 +321,7 @@ class ScrollEngine extends ChangeNotifier {
     _pixelOffset = 0.0;
     _activeLineIndex = 0;
     _endFired = false;
+    _syncClockToPosition();
     notifyListeners();
   }
 

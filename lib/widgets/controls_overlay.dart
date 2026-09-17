@@ -1,14 +1,33 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
 import '../models/song_theme.dart';
+import 'theme_picker.dart';
 import '../services/chord_transposer.dart';
 import '../utils/constants.dart';
+
+enum _MoreAction {
+  tapTempo,
+  duration,
+  transpose,
+  cueMode,
+  mirror,
+  theme,
+  format,
+  remote,
+  display,
+  removeAudio,
+  recordTiming,
+  removeTiming,
+}
 
 class ControlsOverlay extends StatefulWidget {
   final SyncEngine syncEngine;
   final ScrollEngine scrollEngine;
+  final VoidCallback onPlayPause;
   final VoidCallback onFullscreen;
   final VoidCallback onSettings;
   final VoidCallback onFormatLyrics;
@@ -19,9 +38,11 @@ class ControlsOverlay extends StatefulWidget {
   final VoidCallback onTapTempo;
   final VoidCallback onSetDuration;
   final VoidCallback? onUnloadAudio;
-  final VoidCallback? onUnloadLrc;
-  final bool hasLrc;
-  final String? lrcFileName;
+
+  /// Where a timed song's timing comes from, or null if it scrolls at speed.
+  final String? timingLabel;
+  final VoidCallback onRecordTiming;
+  final VoidCallback? onRemoveTiming;
   final String? setlistPosition;
   final bool isFullscreen;
   final bool isMirrored;
@@ -37,7 +58,10 @@ class ControlsOverlay extends StatefulWidget {
   final VoidCallback onToggleCueMode;
   final String? remoteUrl;
   final SongTheme? songTheme;
+  final SongTheme? defaultTheme;
+  final bool songHasOwnTheme;
   final ValueChanged<SongTheme>? onThemeChanged;
+  final VoidCallback? onThemeReset;
   final VoidCallback? onMoveToDisplay;
   final bool isOnSecondDisplay;
 
@@ -45,6 +69,7 @@ class ControlsOverlay extends StatefulWidget {
     super.key,
     required this.syncEngine,
     required this.scrollEngine,
+    required this.onPlayPause,
     required this.onFullscreen,
     required this.onSettings,
     required this.onFormatLyrics,
@@ -55,9 +80,9 @@ class ControlsOverlay extends StatefulWidget {
     required this.onTapTempo,
     required this.onSetDuration,
     this.onUnloadAudio,
-    this.onUnloadLrc,
-    this.hasLrc = false,
-    this.lrcFileName,
+    this.timingLabel,
+    required this.onRecordTiming,
+    this.onRemoveTiming,
     this.setlistPosition,
     required this.isFullscreen,
     required this.isMirrored,
@@ -73,7 +98,10 @@ class ControlsOverlay extends StatefulWidget {
     required this.onToggleCueMode,
     this.remoteUrl,
     this.songTheme,
+    this.defaultTheme,
+    this.songHasOwnTheme = false,
     this.onThemeChanged,
+    this.onThemeReset,
     this.onMoveToDisplay,
     this.isOnSecondDisplay = false,
   });
@@ -136,30 +164,39 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       child: GestureDetector(
         onTap: _show,
         behavior: HitTestBehavior.translucent,
-        child: Stack(
-          children: [
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: FadeTransition(
-                opacity: _fadeAnimation,
-                child: _buildBar(),
-              ),
+        // Hidden controls ignore taps, so tapping the screen to bring them
+        // back can't also press a button (e.g. NEXT) by accident.
+        child: AnimatedBuilder(
+          animation: _fadeController,
+          builder: (context, child) => IgnorePointer(
+            ignoring: _fadeController.value == 0,
+            child: child,
+          ),
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: _buildBar(),
+                ),
+                if (widget.onNextScript != null)
+                  Positioned(
+                    right: 16,
+                    bottom: AppDimensions.controlsHeight + 8,
+                    child: _nextSongButton(),
+                  ),
+                if (widget.onPrevScript != null)
+                  Positioned(
+                    left: 16,
+                    bottom: AppDimensions.controlsHeight + 8,
+                    child: _prevSongButton(),
+                  ),
+              ],
             ),
-            if (widget.onNextScript != null)
-              Positioned(
-                right: 16,
-                bottom: AppDimensions.controlsHeight + 8,
-                child: _nextSongButton(),
-              ),
-            if (widget.onPrevScript != null)
-              Positioned(
-                left: 16,
-                bottom: AppDimensions.controlsHeight + 8,
-                child: _prevSongButton(),
-              ),
-          ],
+          ),
         ),
       ),
     );
@@ -191,7 +228,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                   Text(
                     'NEXT',
                     style: TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.ui,
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: AppColors.accent,
@@ -226,7 +263,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                 color: AppColors.surface,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: AppColors.sectionHeader.withValues(alpha: 0.4),
+                  color: AppColors.uiHint.withValues(alpha: 0.4),
                   width: 1,
                 ),
               ),
@@ -234,15 +271,15 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(Icons.skip_previous_rounded,
-                      size: 18, color: AppColors.sectionHeader),
+                      size: 18, color: AppColors.uiHint),
                   const SizedBox(width: 4),
                   Text(
                     'PREV',
                     style: TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.ui,
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.sectionHeader,
+                      color: AppColors.uiHint,
                       letterSpacing: 1.5,
                     ),
                   ),
@@ -255,102 +292,103 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     );
   }
 
+  // Only what's needed mid-song lives in the bar; everything else is under
+  // More, so the bar fits even the smallest window.
   Widget _buildBar() {
-    return ListenableBuilder(
-      listenable: widget.syncEngine,
-      builder: (context, _) {
-        final state = widget.syncEngine.state;
-        return Container(
-          height: AppDimensions.controlsHeight + 16,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [AppColors.controlBackground, Colors.transparent],
-            ),
-          ),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              _backButton(),
-              if (widget.setlistPosition != null) ...[
-                const SizedBox(width: 10),
-                Text(
-                  widget.setlistPosition!,
-                  style: const TextStyle(
-                    fontFamily: AppTextStyles.fontFamily,
-                    fontSize: 12,
-                    color: AppColors.sectionHeader,
-                  ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 960;
+        final gap = compact ? 4.0 : 8.0;
+        return ListenableBuilder(
+          listenable: widget.syncEngine,
+          builder: (context, _) {
+            final state = widget.syncEngine.state;
+            return Container(
+              height: AppDimensions.controlsHeight + 16,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [AppColors.controlBackground, Colors.transparent],
                 ),
-              ],
-              const SizedBox(width: 16),
-              _playPauseButton(state),
-              const SizedBox(width: 20),
-              _speedControl(state),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    widget.songTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.activeLine,
-                      letterSpacing: 0.5,
+              ),
+              padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 16 : 32, vertical: 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _backButton(),
+                  if (widget.setlistPosition != null) ...[
+                    const SizedBox(width: 10),
+                    Text(
+                      widget.setlistPosition!,
+                      style: const TextStyle(
+                        fontFamily: AppTextStyles.mono,
+                        fontSize: 12,
+                        color: AppColors.uiHint,
+                      ),
                     ),
-                  ),
-                ),
+                  ],
+                  SizedBox(width: compact ? 8 : 16),
+                  _playPauseButton(state),
+                  SizedBox(width: compact ? 8 : 20),
+                  widget.timingLabel != null
+                      ? _timingChip()
+                      : _speedControl(state, sliderWidth: compact ? 72 : 120),
+                  const SizedBox(width: 12),
+                  Expanded(child: _songTitle()),
+                  const SizedBox(width: 12),
+                  if (widget.hasAudio) ...[
+                    _volumeControl(sliderWidth: compact ? 56 : 72),
+                    SizedBox(width: gap),
+                  ],
+                  _loopButton(),
+                  SizedBox(width: gap),
+                  _moreButton(),
+                  SizedBox(width: gap),
+                  _settingsButton(),
+                  SizedBox(width: gap),
+                  _fullscreenButton(),
+                ],
               ),
-              _loopButton(),
-              if (widget.onMoveToDisplay != null) ...[
-                const SizedBox(width: 12),
-                _moveToDisplayButton(),
-              ],
-              const SizedBox(width: 12),
-              _themeButton(),
-              const SizedBox(width: 12),
-              _remoteButton(),
-              const SizedBox(width: 12),
-              _cueModeButton(),
-              const SizedBox(width: 12),
-              _mirrorButton(),
-              const SizedBox(width: 12),
-              _tapTempoButton(),
-              if (widget.hasChords) ...[
-                const SizedBox(width: 12),
-                _transposeControl(),
-              ],
-              const SizedBox(width: 12),
-              _durationButton(),
-              _audioButton(),
-              if (widget.hasAudio) ...[
-                const SizedBox(width: 4),
-                _volumeControl(),
-                const SizedBox(width: 8),
-                _lrcButton(),
-                const SizedBox(width: 4),
-              ],
-              const SizedBox(width: 12),
-              _iconButton(
-                icon: Icons.format_paint_rounded,
-                onTap: widget.onFormatLyrics,
-                tooltip: 'Format lyrics',
-              ),
-              const SizedBox(width: 12),
-              _settingsButton(),
-              const SizedBox(width: 12),
-              _fullscreenButton(),
-            ],
-          ),
+            );
+          },
         );
       },
     );
   }
+
+  Widget _songTitle() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Flexible(
+          child: Text(
+            widget.songTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AppTextStyles.ui,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        if (widget.hasAudio) ...[
+          const SizedBox(width: 8),
+          _statusIcon(Icons.music_note_rounded,
+              'Backing track: ${widget.audioFileName ?? "loaded"}'),
+        ],
+      ],
+    );
+  }
+
+  Widget _statusIcon(IconData icon, String tooltip) => Tooltip(
+        message: tooltip,
+        child: Icon(icon, size: 15, color: AppColors.accent),
+      );
 
   Widget _playPauseButton(SyncEngineState state) {
     final isPlaying = state.playState == PlayState.playing;
@@ -358,24 +396,24 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
       size: 32,
       color: AppColors.accent,
-      onTap: () => widget.syncEngine.togglePlayPause(),
+      onTap: widget.onPlayPause,
       tooltip: isPlaying ? 'Pause (Space)' : 'Play (Space)',
     );
   }
 
-  Widget _speedControl(SyncEngineState state) {
+  Widget _speedControl(SyncEngineState state, {required double sliderWidth}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         _iconButton(
           icon: Icons.remove,
           size: 18,
-          onTap: () => widget.syncEngine.adjustSpeed(-0.1),
+          onTap: () => widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep),
           tooltip: 'Slow down (−)',
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
         SizedBox(
-          width: 120,
+          width: sliderWidth,
           child: SliderTheme(
             data: SliderThemeData(
               trackHeight: 2,
@@ -399,29 +437,85 @@ class _ControlsOverlayState extends State<ControlsOverlay>
             ),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
         _iconButton(
           icon: Icons.add,
           size: 18,
-          onTap: () => widget.syncEngine.adjustSpeed(0.1),
+          onTap: () => widget.syncEngine.adjustSpeed(ScrollConstants.speedStep),
           tooltip: 'Speed up (+)',
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${state.manualMultiplier.toStringAsFixed(1)}x',
-          style: const TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
-            fontSize: 12,
-            color: AppColors.sectionHeader,
+        const SizedBox(width: 4),
+        SizedBox(
+          width: 48, // fixed so the bar doesn't shift as the number changes
+          child: Text(
+            ScrollConstants.speedLabel(state.manualMultiplier),
+            style: const TextStyle(
+              fontFamily: AppTextStyles.mono,
+              fontSize: 12,
+              color: AppColors.uiText,
+            ),
           ),
         ),
       ],
     );
   }
 
+  // A timed song follows its timing, so a song clock replaces the speed control
+  Widget _timingChip() {
+    return Tooltip(
+      message: '${widget.timingLabel}\n'
+          'If the band drifts: press ↓ as a line starts, or → at a new section',
+      child: ListenableBuilder(
+        listenable: widget.scrollEngine,
+        builder: (context, _) {
+          final seconds = widget.scrollEngine.clockSeconds.floor();
+          final clock =
+              '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.accent.withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.graphic_eq_rounded,
+                    size: 16, color: AppColors.accent),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 40, // fixed so the bar doesn't shift as time passes
+                  child: Text(
+                    clock,
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.mono,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                const Text(
+                  'TIMED',
+                  style: TextStyle(
+                    fontFamily: AppTextStyles.ui,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.accent,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _backButton() => _iconButton(
         icon: Icons.arrow_back_rounded,
-        color: AppColors.sectionHeader,
         onTap: widget.onBack,
         tooltip: 'Back (ESC)',
       );
@@ -433,67 +527,16 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         final enabled = widget.scrollEngine.loopEnabled;
         return _iconButton(
           icon: Icons.repeat_rounded,
-          color: enabled ? AppColors.loopMarker : AppColors.sectionHeader,
+          color: enabled ? AppColors.loopMarker : AppColors.uiText,
           onTap: () =>
               widget.scrollEngine.setLoopEnabled(!enabled),
-          tooltip: 'Loop section (L)',
+          tooltip: enabled ? 'Loop section: on (L)' : 'Loop section (L)',
         );
       },
     );
   }
 
-  Widget _mirrorButton() => _iconButton(
-        icon: Icons.flip_rounded,
-        color: widget.isMirrored ? AppColors.accent : AppColors.inactiveLine,
-        onTap: widget.onToggleMirror,
-        tooltip: 'Mirror flip (M)',
-      );
-
-  Widget _tapTempoButton() => _iconButton(
-        icon: Icons.touch_app_rounded,
-        onTap: widget.onTapTempo,
-        tooltip: 'Tap tempo (T) — tap 4+ times to set speed',
-      );
-
-  Widget _durationButton() => _iconButton(
-        icon: Icons.timer_outlined,
-        onTap: widget.onSetDuration,
-        tooltip: 'Set song duration — auto-calculates scroll speed',
-      );
-
-  Widget _lrcButton() {
-    if (!widget.hasLrc) return const SizedBox.shrink();
-    return Tooltip(
-      message: 'Synced lyrics: ${widget.lrcFileName ?? "loaded"}  (right-click to remove)',
-      child: GestureDetector(
-        onSecondaryTap: widget.onUnloadLrc,
-        child: _iconButton(
-          icon: Icons.lyrics_rounded,
-          color: AppColors.accent,
-          onTap: null,
-          tooltip: null,
-        ),
-      ),
-    );
-  }
-
-  Widget _audioButton() {
-    if (!widget.hasAudio) return const SizedBox.shrink();
-    return Tooltip(
-      message: 'Audio: ${widget.audioFileName ?? "loaded"}  (right-click to remove)',
-      child: GestureDetector(
-        onSecondaryTap: widget.onUnloadAudio,
-        child: _iconButton(
-          icon: Icons.music_note_rounded,
-          color: AppColors.accent,
-          onTap: null,
-          tooltip: null,
-        ),
-      ),
-    );
-  }
-
-  Widget _volumeControl() {
+  Widget _volumeControl({required double sliderWidth}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -504,11 +547,11 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                   ? Icons.volume_down_rounded
                   : Icons.volume_up_rounded,
           size: 16,
-          color: AppColors.sectionHeader,
+          color: AppColors.uiText,
         ),
         const SizedBox(width: 2),
         SizedBox(
-          width: 72,
+          width: sliderWidth,
           child: SliderTheme(
             data: SliderThemeData(
               trackHeight: 2,
@@ -547,126 +590,398 @@ class _ControlsOverlayState extends State<ControlsOverlay>
             : 'Fullscreen (F)',
       );
 
-  Widget _themeButton() {
-    final theme = widget.songTheme;
-    return Tooltip(
-      message: 'Song colour theme',
-      child: InkWell(
-        onTap: widget.onThemeChanged != null ? _showThemePicker : null,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Container(
-            width: 18,
-            height: 18,
-            decoration: BoxDecoration(
-              color: theme?.accent ?? AppColors.accent,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: AppColors.sectionHeader.withValues(alpha: 0.4),
-                width: 1.5,
-              ),
-            ),
-          ),
-        ),
+  // ── More menu ──────────────────────────────────────────────────────────────
+
+  Widget _moreButton() {
+    return PopupMenuButton<_MoreAction>(
+      tooltip: 'More',
+      position: PopupMenuPosition.over,
+      onSelected: _onMoreSelected,
+      itemBuilder: (context) => _moreItems(),
+      child: const Padding(
+        padding: EdgeInsets.all(6),
+        child: Icon(Icons.more_horiz_rounded, size: 22, color: AppColors.uiText),
       ),
     );
   }
 
-  void _showThemePicker() {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text(
-          'Song Colour Theme',
-          style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: AppColors.activeLine,
+  List<PopupMenuEntry<_MoreAction>> _moreItems() {
+    final transposeLabel = ChordTransposer.offsetLabel(widget.transposeSteps);
+    final theme = widget.songTheme ?? SongTheme.defaultTheme;
+    final timed = widget.timingLabel != null;
+    return [
+      _menuItem(_MoreAction.recordTiming, Icons.radio_button_checked_rounded,
+          timed ? 'Record timing again…' : 'Record timing…'),
+      // Speed tools don't apply to a song that follows its timing
+      if (!timed) ...[
+        _menuItem(_MoreAction.tapTempo, Icons.speed_rounded, 'Tap tempo…',
+            shortcut: 'T'),
+        _menuItem(_MoreAction.duration, Icons.timer_outlined,
+            'Set song duration…'),
+      ],
+      if (widget.onRemoveTiming != null)
+        _menuItem(_MoreAction.removeTiming, Icons.timer_off_outlined,
+            'Remove timing…'),
+      if (widget.hasChords)
+        _menuItem(_MoreAction.transpose, Icons.swap_vert_rounded, 'Transpose…',
+            shortcut: transposeLabel == '0' ? null : transposeLabel),
+      const PopupMenuDivider(height: 8),
+      _menuItem(_MoreAction.cueMode, Icons.format_line_spacing_rounded,
+          'Cue mode: line by line',
+          checked: widget.cueMode),
+      _menuItem(_MoreAction.mirror, Icons.flip_rounded, 'Mirror text',
+          shortcut: 'M', checked: widget.isMirrored),
+      const PopupMenuDivider(height: 8),
+      _menuItem(
+        _MoreAction.theme,
+        Icons.palette_outlined,
+        'Colour theme…',
+        trailing: Container(
+          width: 16,
+          height: 16,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: theme.background,
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.uiHint, width: 1),
+          ),
+          child: Container(
+            width: 6,
+            height: 6,
+            decoration:
+                BoxDecoration(color: theme.accent, shape: BoxShape.circle),
           ),
         ),
-        content: SizedBox(
-          width: 340,
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: SongTheme.presets.map((t) {
-              final selected = widget.songTheme?.id == t.id;
-              return GestureDetector(
-                onTap: () {
-                  widget.onThemeChanged!(t);
-                  Navigator.of(ctx).pop();
-                },
-                child: Container(
-                  width: 96,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: t.background,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: selected
-                          ? t.accent
-                          : AppColors.sectionHeader.withValues(alpha: 0.2),
-                      width: selected ? 2 : 1,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: t.accent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        t.label,
-                        style: TextStyle(
-                          fontFamily: AppTextStyles.fontFamily,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: t.accent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
+        enabled: widget.onThemeChanged != null,
+      ),
+      _menuItem(_MoreAction.format, Icons.format_paint_rounded,
+          'Format lyrics…'),
+      _menuItem(
+        _MoreAction.remote,
+        Icons.wifi_rounded,
+        widget.remoteUrl != null ? 'Phone remote…' : 'Phone remote unavailable',
+        enabled: widget.remoteUrl != null,
+      ),
+      if (widget.onMoveToDisplay != null)
+        _menuItem(
+          _MoreAction.display,
+          widget.isOnSecondDisplay ? Icons.monitor_rounded : Icons.cast_rounded,
+          widget.isOnSecondDisplay
+              ? 'Return to main display'
+              : 'Move to second display',
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
-              'Cancel',
+      if (widget.hasAudio) ...[
+        const PopupMenuDivider(height: 8),
+        _menuItem(_MoreAction.removeAudio, Icons.music_off_rounded,
+            'Remove backing track…'),
+      ],
+    ];
+  }
+
+  PopupMenuItem<_MoreAction> _menuItem(
+    _MoreAction action,
+    IconData icon,
+    String label, {
+    String? shortcut,
+    Widget? trailing,
+    bool checked = false,
+    bool enabled = true,
+  }) {
+    return PopupMenuItem<_MoreAction>(
+      value: action,
+      enabled: enabled,
+      height: 40,
+      child: Row(
+        children: [
+          Icon(icon,
+              size: 18,
+              color: checked
+                  ? AppColors.accent
+                  : enabled
+                      ? AppColors.uiText
+                      : AppColors.uiHint),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                color: AppColors.sectionHeader,
+                fontFamily: AppTextStyles.ui,
+                fontSize: 12,
+                color: enabled ? AppColors.textPrimary : AppColors.uiHint,
               ),
             ),
           ),
+          if (shortcut != null) ...[
+            const SizedBox(width: 16),
+            Text(
+              shortcut,
+              style: const TextStyle(
+                fontFamily: AppTextStyles.ui,
+                fontSize: 11,
+                color: AppColors.uiHint,
+              ),
+            ),
+          ],
+          if (trailing != null) ...[
+            const SizedBox(width: 16),
+            trailing,
+          ],
+          if (checked) ...[
+            const SizedBox(width: 12),
+            const Icon(Icons.check_rounded, size: 16, color: AppColors.accent),
+          ],
         ],
       ),
     );
   }
 
-  Widget _remoteButton() {
-    final active = widget.remoteUrl != null;
-    return Tooltip(
-      message: active ? 'Remote: ${widget.remoteUrl}' : 'Remote control unavailable',
-      child: _iconButton(
-        icon: Icons.wifi_rounded,
-        color: active ? AppColors.accent : AppColors.inactiveLine,
-        onTap: active
-            ? () => _showRemoteDialog(widget.remoteUrl!)
-            : null,
-        tooltip: null,
+  void _onMoreSelected(_MoreAction action) {
+    switch (action) {
+      case _MoreAction.tapTempo:
+        _showTapTempoDialog();
+      case _MoreAction.duration:
+        widget.onSetDuration();
+      case _MoreAction.transpose:
+        _showTransposeDialog();
+      case _MoreAction.cueMode:
+        widget.onToggleCueMode();
+      case _MoreAction.mirror:
+        widget.onToggleMirror();
+      case _MoreAction.theme:
+        _showThemePicker();
+      case _MoreAction.format:
+        widget.onFormatLyrics();
+      case _MoreAction.remote:
+        if (widget.remoteUrl != null) _showRemoteDialog(widget.remoteUrl!);
+      case _MoreAction.display:
+        widget.onMoveToDisplay?.call();
+      case _MoreAction.removeAudio:
+        _confirmRemove(
+          title: 'Remove backing track?',
+          message: 'The backing track is removed from "${widget.songTitle}". '
+              'The audio file itself is not deleted.',
+          onConfirm: widget.onUnloadAudio,
+        );
+      case _MoreAction.recordTiming:
+        widget.onRecordTiming();
+      case _MoreAction.removeTiming:
+        _confirmRemove(
+          title: 'Remove timing?',
+          message: '"${widget.songTitle}" goes back to scrolling at its speed. '
+              'The lyrics are kept.',
+          onConfirm: widget.onRemoveTiming,
+        );
+    }
+  }
+
+  // ── Dialogs ────────────────────────────────────────────────────────────────
+
+  static const _dialogTitleStyle = TextStyle(
+    fontFamily: AppTextStyles.ui,
+    fontSize: 18,
+    fontWeight: FontWeight.w700,
+    color: AppColors.textPrimary,
+  );
+
+  static const _dialogBodyStyle = TextStyle(
+    fontFamily: AppTextStyles.ui,
+    fontSize: 12,
+    color: AppColors.uiText,
+    height: 1.5,
+  );
+
+  Widget _dialogButton(String label, VoidCallback onPressed,
+      {bool primary = false}) {
+    return TextButton(
+      onPressed: onPressed,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: AppTextStyles.ui,
+          fontWeight: primary ? FontWeight.w700 : FontWeight.w400,
+          color: primary ? AppColors.accent : AppColors.uiHint,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemove({
+    required String title,
+    required String message,
+    required VoidCallback? onConfirm,
+  }) async {
+    if (onConfirm == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: _dialogTitleStyle),
+        content: SizedBox(
+          width: 340,
+          child: Text(message, style: _dialogBodyStyle),
+        ),
+        actions: [
+          _dialogButton('Cancel', () => Navigator.of(ctx).pop(false)),
+          _dialogButton('Remove', () => Navigator.of(ctx).pop(true),
+              primary: true),
+        ],
+      ),
+    );
+    if (confirmed == true) onConfirm();
+  }
+
+  void _showTapTempoDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Tap tempo', style: _dialogTitleStyle),
+        content: Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent &&
+                (event.logicalKey == LogicalKeyboardKey.keyT ||
+                    event.logicalKey == LogicalKeyboardKey.space)) {
+              widget.onTapTempo();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Tap along with the beat 4 or more times (or press T). '
+                  'The scroll speed follows your taps.',
+                  textAlign: TextAlign.center,
+                  style: _dialogBodyStyle,
+                ),
+                const SizedBox(height: 20),
+                Material(
+                  color: AppColors.accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(14),
+                  child: InkWell(
+                    onTap: widget.onTapTempo,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      height: 110,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.accent, width: 1.5),
+                      ),
+                      child: const Text(
+                        'TAP',
+                        style: TextStyle(
+                          fontFamily: AppTextStyles.ui,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.accent,
+                          letterSpacing: 4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ListenableBuilder(
+                  listenable: widget.syncEngine,
+                  builder: (context, _) => Text(
+                    'Speed  ${ScrollConstants.speedLabel(widget.syncEngine.state.manualMultiplier)}',
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.mono,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          _dialogButton('Done', () => Navigator.of(ctx).pop(), primary: true),
+        ],
+      ),
+    );
+  }
+
+  void _showTransposeDialog() {
+    var steps = widget.transposeSteps;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          void change(int to) {
+            final normalized = ((to % 12) + 12) % 12;
+            setDialogState(() => steps = normalized);
+            widget.onTransposeChanged(normalized);
+          }
+
+          final label = ChordTransposer.offsetLabel(steps);
+          return AlertDialog(
+            title: const Text('Transpose chords', style: _dialogTitleStyle),
+            content: SizedBox(
+              width: 280,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _iconButton(
+                    icon: Icons.remove_rounded,
+                    size: 24,
+                    onTap: () => change(steps - 1),
+                    tooltip: 'Down one semitone',
+                  ),
+                  SizedBox(
+                    width: 140,
+                    child: Text(
+                      label == '0' ? 'Original key' : '$label semitones',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: AppTextStyles.ui,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: label == '0'
+                            ? AppColors.uiText
+                            : AppColors.accent,
+                      ),
+                    ),
+                  ),
+                  _iconButton(
+                    icon: Icons.add_rounded,
+                    size: 24,
+                    onTap: () => change(steps + 1),
+                    tooltip: 'Up one semitone',
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              _dialogButton('Reset', () => change(0)),
+              _dialogButton('Done', () => Navigator.of(ctx).pop(),
+                  primary: true),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showThemePicker() {
+    final onChanged = widget.onThemeChanged;
+    if (onChanged == null) return;
+    final theme = widget.songTheme ?? SongTheme.defaultTheme;
+    showDialog<void>(
+      context: context,
+      // Light, so the lyrics behind show each colour as it's picked
+      barrierColor: const Color(0x33000000),
+      builder: (ctx) => SongThemeDialog(
+        theme: theme,
+        defaultTheme: widget.defaultTheme ?? SongTheme.defaultTheme,
+        hasOwnTheme: widget.songHasOwnTheme,
+        onChanged: onChanged,
+        onReset: widget.onThemeReset,
       ),
     );
   }
@@ -675,16 +990,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text(
-          'Phone Remote Control',
-          style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: AppColors.activeLine,
-          ),
-        ),
+        title: const Text('Phone remote', style: _dialogTitleStyle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -692,14 +998,11 @@ class _ControlsOverlayState extends State<ControlsOverlay>
             const Text(
               'Scan with your phone or open the address below\n(must be on the same Wi-Fi network)',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                fontSize: 12,
-                color: AppColors.sectionHeader,
-                height: 1.5,
-              ),
+              style: _dialogBodyStyle,
             ),
             const SizedBox(height: 20),
+            // Drawn locally: works without internet at the venue and doesn't
+            // send the address to an outside service.
             Container(
               width: 180,
               height: 180,
@@ -708,26 +1011,10 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                 borderRadius: BorderRadius.circular(12),
               ),
               padding: const EdgeInsets.all(8),
-              child: Image.network(
-                'https://api.qrserver.com/v1/create-qr-code/'
-                '?size=200x200&margin=0&data=${Uri.encodeComponent(url)}',
-                fit: BoxFit.contain,
-                loadingBuilder: (ctx, child, progress) => progress == null
-                    ? child
-                    : const Center(
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.accent,
-                          ),
-                        ),
-                      ),
-                errorBuilder: (ctx, err, stack) => const Center(
-                  child: Icon(Icons.qr_code_2_rounded,
-                      size: 48, color: AppColors.sectionHeader),
-                ),
+              child: QrImageView(
+                data: url,
+                padding: EdgeInsets.zero,
+                backgroundColor: Colors.white,
               ),
             ),
             const SizedBox(height: 16),
@@ -735,14 +1022,14 @@ class _ControlsOverlayState extends State<ControlsOverlay>
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                color: AppColors.surfaceElevated,
+                color: AppColors.surfaceSelected,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: SelectableText(
                 url,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontFamily: AppTextStyles.fontFamily,
+                  fontFamily: AppTextStyles.mono,
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: AppColors.accent,
@@ -753,80 +1040,16 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
-              'Close',
-              style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
-                color: AppColors.sectionHeader,
-              ),
-            ),
-          ),
+          _dialogButton('Close', () => Navigator.of(ctx).pop()),
         ],
       ),
-    );
-  }
-
-  Widget _moveToDisplayButton() => _iconButton(
-        icon: _isOnSecondDisplay
-            ? Icons.monitor_rounded
-            : Icons.cast_rounded,
-        color: _isOnSecondDisplay ? AppColors.accent : AppColors.inactiveLine,
-        onTap: widget.onMoveToDisplay,
-        tooltip: _isOnSecondDisplay
-            ? 'Return to main display'
-            : 'Move to second display',
-      );
-
-  bool get _isOnSecondDisplay => widget.isOnSecondDisplay;
-
-  Widget _cueModeButton() => _iconButton(
-        icon: Icons.touch_app_outlined,
-        color: widget.cueMode ? AppColors.accent : AppColors.inactiveLine,
-        onTap: widget.onToggleCueMode,
-        tooltip: widget.cueMode ? 'Cue mode ON — Space advances one line' : 'Cue mode OFF — tap to enable',
-      );
-
-  Widget _transposeControl() {
-    final label = ChordTransposer.offsetLabel(widget.transposeSteps);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _iconButton(
-          icon: Icons.arrow_drop_down_rounded,
-          size: 20,
-          onTap: () => widget.onTransposeChanged(widget.transposeSteps - 1),
-          tooltip: 'Transpose down one semitone',
-        ),
-        SizedBox(
-          width: 36,
-          child: Text(
-            label == '0' ? '♩' : label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: label == '0' ? AppColors.sectionHeader : AppColors.accent,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
-        _iconButton(
-          icon: Icons.arrow_drop_up_rounded,
-          size: 20,
-          onTap: () => widget.onTransposeChanged(widget.transposeSteps + 1),
-          tooltip: 'Transpose up one semitone',
-        ),
-      ],
     );
   }
 
   Widget _iconButton({
     required IconData icon,
     double size = 22,
-    Color color = AppColors.inactiveLine,
+    Color color = AppColors.uiText,
     required VoidCallback? onTap,
     String? tooltip,
   }) {

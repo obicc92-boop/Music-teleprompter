@@ -58,8 +58,6 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520, maxHeight: 540),
         child: Column(
@@ -88,16 +86,16 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
             child: Text(
               'Find Synced Lyrics',
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: AppColors.activeLine,
+                color: AppColors.textPrimary,
               ),
             ),
           ),
           IconButton(
             icon: const Icon(Icons.close_rounded, size: 18),
-            color: AppColors.sectionHeader,
+            color: AppColors.uiHint,
             onPressed: () => Navigator.of(context).pop(),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
@@ -117,19 +115,19 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
               controller: _ctrl,
               autofocus: false,
               style: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 fontSize: 13,
-                color: AppColors.activeLine,
+                color: AppColors.textPrimary,
               ),
               decoration: InputDecoration(
                 hintText: 'Artist · Song title',
                 hintStyle: const TextStyle(
-                  fontFamily: AppTextStyles.fontFamily,
+                  fontFamily: AppTextStyles.ui,
                   fontSize: 13,
-                  color: AppColors.sectionHeader,
+                  color: AppColors.uiHint,
                 ),
                 filled: true,
-                fillColor: AppColors.surfaceElevated,
+                fillColor: AppColors.surfaceSelected,
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 border: OutlineInputBorder(
@@ -168,9 +166,9 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
             _error!,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
+              fontFamily: AppTextStyles.ui,
               fontSize: 12,
-              color: AppColors.sectionHeader,
+              color: AppColors.uiHint,
               height: 1.6,
             ),
           ),
@@ -187,7 +185,7 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
       separatorBuilder: (_, _) => Container(
         height: 1,
         margin: const EdgeInsets.symmetric(horizontal: 16),
-        color: AppColors.surfaceElevated,
+        color: AppColors.hairline,
       ),
       itemBuilder: (_, i) => _ResultTile(
         result: _results[i],
@@ -202,15 +200,15 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
       child: Row(
         children: [
           const Icon(Icons.info_outline_rounded,
-              size: 12, color: AppColors.sectionHeader),
+              size: 12, color: AppColors.uiHint),
           const SizedBox(width: 6),
           const Expanded(
             child: Text(
               'Powered by lrclib.net — free, open lyrics database',
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 fontSize: 10,
-                color: AppColors.sectionHeader,
+                color: AppColors.uiHint,
               ),
             ),
           ),
@@ -219,7 +217,7 @@ class _LrcSearchDialogState extends State<LrcSearchDialog> {
             child: const Text(
               'Load from file',
               style: TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 fontSize: 11,
                 color: AppColors.accent,
                 fontWeight: FontWeight.w600,
@@ -253,10 +251,10 @@ class _ResultTile extends StatelessWidget {
                   Text(
                     result.trackName,
                     style: const TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.ui,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.activeLine,
+                      color: AppColors.textPrimary,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -268,9 +266,9 @@ class _ResultTile extends StatelessWidget {
                       if (result.albumName.isNotEmpty) result.albumName,
                     ].join(' · '),
                     style: const TextStyle(
-                      fontFamily: AppTextStyles.fontFamily,
+                      fontFamily: AppTextStyles.ui,
                       fontSize: 11,
-                      color: AppColors.sectionHeader,
+                      color: AppColors.uiHint,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -282,14 +280,14 @@ class _ResultTile extends StatelessWidget {
             Text(
               result.durationLabel,
               style: const TextStyle(
-                fontFamily: AppTextStyles.fontFamily,
+                fontFamily: AppTextStyles.ui,
                 fontSize: 11,
-                color: AppColors.sectionHeader,
+                color: AppColors.uiHint,
               ),
             ),
             const SizedBox(width: 8),
             const Icon(Icons.chevron_right_rounded,
-                size: 16, color: AppColors.sectionHeader),
+                size: 16, color: AppColors.uiHint),
           ],
         ),
       ),
@@ -316,7 +314,7 @@ class _SearchButton extends StatelessWidget {
         child: const Text(
           'Search',
           style: TextStyle(
-            fontFamily: AppTextStyles.fontFamily,
+            fontFamily: AppTextStyles.ui,
             fontSize: 12,
             fontWeight: FontWeight.w700,
             color: Colors.black,
@@ -332,5 +330,5 @@ class _HDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      Container(height: 1, color: AppColors.surfaceElevated);
+      Container(height: 1, color: AppColors.hairline);
 }

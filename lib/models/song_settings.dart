@@ -9,6 +9,7 @@ class SongSettings {
   final bool? textAlignLeft;
   final bool? showActiveLineHighlight;
   final double? activeLineYOffset;
+  final String? colorTheme;
 
   const SongSettings({
     this.scrollSpeedMultiplier,
@@ -17,6 +18,7 @@ class SongSettings {
     this.textAlignLeft,
     this.showActiveLineHighlight,
     this.activeLineYOffset,
+    this.colorTheme,
   });
 
   static const none = SongSettings();
@@ -27,7 +29,8 @@ class SongSettings {
       displayFont == null &&
       textAlignLeft == null &&
       showActiveLineHighlight == null &&
-      activeLineYOffset == null;
+      activeLineYOffset == null &&
+      colorTheme == null;
 
   /// The settings this song plays with: its own values over the defaults.
   AppSettings applyTo(AppSettings defaults) => defaults.copyWith(
@@ -37,6 +40,7 @@ class SongSettings {
         textAlignLeft: textAlignLeft,
         showActiveLineHighlight: showActiveLineHighlight,
         activeLineYOffset: activeLineYOffset,
+        colorTheme: colorTheme,
       );
 
   /// Keeps every setting that differs between [before] and [after] as this
@@ -62,6 +66,9 @@ class SongSettings {
         activeLineYOffset: after.activeLineYOffset != before.activeLineYOffset
             ? after.activeLineYOffset
             : activeLineYOffset,
+        colorTheme: after.colorTheme != before.colorTheme
+            ? after.colorTheme
+            : colorTheme,
       );
 
   /// Sets this song's speed, or clears it with null so the default is used.
@@ -72,6 +79,18 @@ class SongSettings {
         textAlignLeft: textAlignLeft,
         showActiveLineHighlight: showActiveLineHighlight,
         activeLineYOffset: activeLineYOffset,
+        colorTheme: colorTheme,
+      );
+
+  /// Sets this song's colours, or clears them with null so the default is used.
+  SongSettings withColorTheme(String? code) => SongSettings(
+        scrollSpeedMultiplier: scrollSpeedMultiplier,
+        fontSize: fontSize,
+        displayFont: displayFont,
+        textAlignLeft: textAlignLeft,
+        showActiveLineHighlight: showActiveLineHighlight,
+        activeLineYOffset: activeLineYOffset,
+        colorTheme: code,
       );
 
   Map<String, dynamic> toJson() => {
@@ -83,6 +102,7 @@ class SongSettings {
         if (showActiveLineHighlight != null)
           'showActiveLineHighlight': showActiveLineHighlight,
         if (activeLineYOffset != null) 'activeLineYOffset': activeLineYOffset,
+        if (colorTheme != null) 'colorTheme': colorTheme,
       };
 
   factory SongSettings.fromJson(Map<String, dynamic> j) => SongSettings(
@@ -92,5 +112,6 @@ class SongSettings {
         textAlignLeft: j['textAlignLeft'] as bool?,
         showActiveLineHighlight: j['showActiveLineHighlight'] as bool?,
         activeLineYOffset: (j['activeLineYOffset'] as num?)?.toDouble(),
+        colorTheme: j['colorTheme'] as String?,
       );
 }

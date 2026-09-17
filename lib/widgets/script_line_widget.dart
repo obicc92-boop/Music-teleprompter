@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/script_line.dart';
 import '../models/script_formatting.dart';
+import '../models/song_theme.dart';
 import '../utils/constants.dart';
 import 'section_header_widget.dart';
 
@@ -18,6 +19,9 @@ class ScriptLineWidget extends StatelessWidget {
   final bool textAlignLeft;
   final bool showHighlight;
 
+  /// Lyric and highlight colours; the default theme when null.
+  final SongTheme? theme;
+
   const ScriptLineWidget({
     super.key,
     required this.line,
@@ -30,7 +34,10 @@ class ScriptLineWidget extends StatelessWidget {
     this.activeWordIndex,
     this.textAlignLeft = false,
     this.showHighlight = true,
+    this.theme,
   });
+
+  SongTheme get _theme => theme ?? SongTheme.defaultTheme;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +48,7 @@ class ScriptLineWidget extends StatelessWidget {
         barCount: line.barCount,
         isActive: proximity == LineProximity.active,
         displayFont: displayFont,
+        theme: theme,
       );
     }
 
@@ -102,12 +110,12 @@ class ScriptLineWidget extends StatelessWidget {
           final isSung = i < activeIdx;
           final style = base.copyWith(
             color: isActive
-                ? AppColors.accent
+                ? _theme.accent
                 : isSung
                     ? base.color?.withValues(alpha: 0.35)
                     : base.color,
             shadows: isActive
-                ? [Shadow(color: AppColors.accent.withValues(alpha: 0.5), blurRadius: 12)]
+                ? [Shadow(color: _theme.accent.withValues(alpha: 0.5), blurRadius: 12)]
                 : null,
           );
           return TextSpan(
@@ -178,7 +186,7 @@ class ScriptLineWidget extends StatelessWidget {
       fontFamily: displayFont ?? AppTextStyles.fontFamily,
       fontSize: chordFontSize,
       fontWeight: FontWeight.w700,
-      color: isActive ? AppColors.accent : AppColors.sectionHeader.withValues(alpha: 0.7),
+      color: isActive ? _theme.accent : _theme.text.withValues(alpha: 0.37),
       letterSpacing: 0.5,
       height: 1.1,
     );
@@ -197,24 +205,28 @@ class ScriptLineWidget extends StatelessWidget {
     if (!showHighlight) {
       // All lines rendered identically — no active/inactive distinction.
       return AppTextStyles.inactiveLine(fontSize, displayFont: displayFont)
-          .copyWith(color: AppColors.activeLine.withValues(alpha: 0.75));
+          .copyWith(color: _theme.text.withValues(alpha: 0.75));
     }
     switch (proximity) {
       case LineProximity.active:
         return AppTextStyles.activeLine(fontSize, displayFont: displayFont).copyWith(
+          color: _theme.text,
           shadows: [
             Shadow(
-              color: AppColors.activeLine.withValues(alpha: 0.15),
+              color: _theme.text.withValues(alpha: 0.15),
               blurRadius: 20,
             ),
           ],
         );
       case LineProximity.near:
-        return AppTextStyles.inactiveLine(fontSize * 0.92, displayFont: displayFont);
+        return AppTextStyles.inactiveLine(fontSize * 0.92, displayFont: displayFont)
+            .copyWith(color: _theme.nearText);
       case LineProximity.mid:
-        return AppTextStyles.inactiveLine(fontSize * 0.78, displayFont: displayFont);
+        return AppTextStyles.inactiveLine(fontSize * 0.78, displayFont: displayFont)
+            .copyWith(color: _theme.nearText);
       case LineProximity.far:
-        return AppTextStyles.dimmedLine(fontSize * 0.65, displayFont: displayFont);
+        return AppTextStyles.dimmedLine(fontSize * 0.65, displayFont: displayFont)
+            .copyWith(color: _theme.farText);
     }
   }
 }

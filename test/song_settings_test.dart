@@ -123,19 +123,6 @@ void main() {
       tester.view.physicalSize = const Size(1400, 1000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
-      // Sidebar labels already overflow their box by a few pixels, which only
-      // shows in debug builds; any other overflow still fails the test.
-      final onError = FlutterError.onError;
-      FlutterError.onError = (details) {
-        final info = details.informationCollector
-                ?.call()
-                .map((n) => n.toStringDeep())
-                .join() ??
-            '';
-        if (info.contains('_SidebarItem')) return;
-        onError?.call(details);
-      };
-      addTearDown(() => FlutterError.onError = onError);
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
           body: Center(
