@@ -251,7 +251,7 @@ class _SettingsViewState extends State<SettingsView> {
           child: _HintBox(
             lines: [
               'PageDown / Enter  →  forward action',
-              'PageUp  →  always goes back one section',
+              'PageUp  →  backward action (previous section or song)',
               'Compatible with AirTurn, PageFlip, and most HID pedals',
             ],
           ),

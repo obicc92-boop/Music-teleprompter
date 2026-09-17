@@ -472,6 +472,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
       onPlayPauseOverride: _onPlayPauseRequested,
       onJumpNextSection: _jumpNextSection,
       onJumpPrevSection: _jumpPrevSection,
+      pedalAction: _settings.pedalAction,
       child: Scaffold(
         backgroundColor: _songTheme.background,
         body: Listener(
