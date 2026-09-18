@@ -39,71 +39,73 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
   Widget build(BuildContext context) {
     final isMac = Platform.isMacOS;
 
-    return Container(
-      height: 36,
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        border: Border(bottom: BorderSide(color: AppColors.hairline)),
-      ),
-      child: Row(
-        children: [
-          // macOS: native traffic lights occupy ~72px at top-left — leave room
-          if (isMac) const SizedBox(width: 76),
+    // A Material, or the text gets Flutter's yellow "unstyled text" underline
+    return Material(
+      color: AppColors.background,
+      child: Container(
+        height: 36,
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: AppColors.hairline)),
+        ),
+        child: Row(
+          children: [
+            // macOS: native traffic lights occupy ~72px at top-left — leave room
+            if (isMac) const SizedBox(width: 76),
 
-          // Draggable title area
-          Expanded(
-            child: DragToMoveArea(
-              child: Align(
-                alignment:
-                    isMac ? Alignment.center : Alignment.centerLeft,
-                child: Padding(
-                  padding: EdgeInsets.only(left: isMac ? 0 : 14),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const AppLogo(size: 20),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Music Teleprompter',
-                        style: TextStyle(
-                          fontFamily: AppTextStyles.ui,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.uiHint,
-                          letterSpacing: 0.3,
+            // Draggable title area
+            Expanded(
+              child: DragToMoveArea(
+                child: Align(
+                  alignment: isMac ? Alignment.center : Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.only(left: isMac ? 0 : 14),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const AppLogo(size: 20),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Music Teleprompter',
+                          style: TextStyle(
+                            fontFamily: AppTextStyles.ui,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.accentText,
+                            letterSpacing: 0.4,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
 
-          // Windows / Linux: custom window buttons
-          if (!isMac) ...[
-            _WinButton(
-              icon: Icons.remove_rounded,
-              tooltip: 'Minimize',
-              onTap: () => windowManager.minimize(),
-            ),
-            _WinButton(
-              icon: _isMaximized
-                  ? Icons.filter_none_rounded
-                  : Icons.crop_square_rounded,
-              tooltip: _isMaximized ? 'Restore' : 'Maximize',
-              onTap: () => _isMaximized
-                  ? windowManager.unmaximize()
-                  : windowManager.maximize(),
-            ),
-            _WinButton(
-              icon: Icons.close_rounded,
-              tooltip: 'Close',
-              isClose: true,
-              onTap: () => windowManager.close(),
-            ),
+            // Windows / Linux: custom window buttons
+            if (!isMac) ...[
+              _WinButton(
+                icon: Icons.remove_rounded,
+                tooltip: 'Minimize',
+                onTap: () => windowManager.minimize(),
+              ),
+              _WinButton(
+                icon: _isMaximized
+                    ? Icons.filter_none_rounded
+                    : Icons.crop_square_rounded,
+                tooltip: _isMaximized ? 'Restore' : 'Maximize',
+                onTap: () => _isMaximized
+                    ? windowManager.unmaximize()
+                    : windowManager.maximize(),
+              ),
+              _WinButton(
+                icon: Icons.close_rounded,
+                tooltip: 'Close',
+                isClose: true,
+                onTap: () => windowManager.close(),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -134,8 +136,9 @@ class _WinButtonState extends State<_WinButton> {
     final hoverBg = widget.isClose
         ? const Color(0xFFE81123)
         : AppColors.surfaceElevated;
-    final iconColor =
-        (_hovered && widget.isClose) ? Colors.white : AppColors.uiHint;
+    final iconColor = (_hovered && widget.isClose)
+        ? Colors.white
+        : AppColors.uiHint;
 
     return Tooltip(
       message: widget.tooltip,

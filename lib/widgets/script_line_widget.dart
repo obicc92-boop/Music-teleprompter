@@ -3,18 +3,21 @@ import '../models/script_line.dart';
 import '../models/script_formatting.dart';
 import '../models/song_theme.dart';
 import '../utils/constants.dart';
+import 'formatted_text.dart';
 import 'section_header_widget.dart';
 
 enum LineProximity { active, near, mid, far }
 
 class ScriptLineWidget extends StatelessWidget {
   final ScriptLine line;
-  final int lineIndex;
   final LineProximity proximity;
   final double fontSize;
   final bool isLoopBoundary;
   final String? displayFont;
-  final ScriptFormatting? formatting;
+
+  /// Colours, sizes and bold on parts of this line, offsets counting from
+  /// the start of [ScriptLine.text].
+  final List<FormatSpan> spans;
   final int? activeWordIndex;
   final bool textAlignLeft;
   final bool showHighlight;
@@ -25,12 +28,11 @@ class ScriptLineWidget extends StatelessWidget {
   const ScriptLineWidget({
     super.key,
     required this.line,
-    required this.lineIndex,
     required this.proximity,
     required this.fontSize,
     this.isLoopBoundary = false,
     this.displayFont,
-    this.formatting,
+    this.spans = const [],
     this.activeWordIndex,
     this.textAlignLeft = false,
     this.showHighlight = true,
@@ -53,7 +55,8 @@ class ScriptLineWidget extends StatelessWidget {
     }
 
     if (line.isEmpty) {
-      return SizedBox(height: fontSize * 0.6);
+      // Wide enough to double-click, so the gap can be filled or removed
+      return SizedBox(width: fontSize * 6, height: fontSize * 0.6);
     }
 
     return _buildLyricLine();
@@ -92,8 +95,7 @@ class ScriptLineWidget extends StatelessWidget {
     );
   }
 
-  bool get _hasFormatting =>
-      formatting != null && formatting!.hasFormatsForLine(lineIndex);
+  bool get _hasFormatting => spans.isNotEmpty;
 
   TextAlign get _textAlign =>
       textAlignLeft ? TextAlign.left : TextAlign.center;
@@ -136,19 +138,10 @@ class ScriptLineWidget extends StatelessWidget {
   }
 
   Widget _buildFormattedText() {
-    final baseStyle = _textStyleForProximity();
     return RichText(
       textAlign: _textAlign,
       text: TextSpan(
-        children: line.words.asMap().entries.map((entry) {
-          final i = entry.key;
-          final word = entry.value;
-          final fmt = formatting?.formatFor(lineIndex, i);
-          return TextSpan(
-            text: i < line.words.length - 1 ? '$word ' : word,
-            style: _applyWordFormat(baseStyle, fmt),
-          );
-        }).toList(),
+        children: formattedSpans(line.text, spans, _textStyleForProximity()),
       ),
     );
   }
@@ -189,15 +182,6 @@ class ScriptLineWidget extends StatelessWidget {
       color: isActive ? _theme.accent : _theme.text.withValues(alpha: 0.37),
       letterSpacing: 0.5,
       height: 1.1,
-    );
-  }
-
-  TextStyle _applyWordFormat(TextStyle base, WordFormat? fmt) {
-    if (fmt == null) return base;
-    return base.copyWith(
-      color: fmt.colorValue != null ? Color(fmt.colorValue!) : base.color,
-      fontSize: (base.fontSize ?? fontSize) * fmt.fontSizeScale,
-      fontWeight: fmt.bold ? FontWeight.w900 : base.fontWeight,
     );
   }
 

@@ -1,11 +1,20 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/script.dart';
+import '../models/script_formatting.dart';
 import '../models/setlist_models.dart';
+import '../services/formatting_service.dart';
 import '../services/script_parser.dart';
 import '../services/file_service.dart';
 import '../services/setlist_service.dart';
+import '../utils/app_platform.dart';
+import '../utils/back_dispatcher.dart';
 import '../utils/constants.dart';
+import '../widgets/formatted_text.dart';
+import '../widgets/formatted_text_controller.dart';
+import '../widgets/lyrics_format_toolbar.dart';
 
 class EditorView extends StatefulWidget {
   final Script initialScript;
@@ -15,12 +24,16 @@ class EditorView extends StatefulWidget {
   /// True when editing a song already in the library (opened from a setlist).
   final bool isLibrarySong;
 
+  /// Where Android's back gesture is sent while the editor is open.
+  final BackDispatcher? backDispatcher;
+
   const EditorView({
     super.key,
     required this.initialScript,
     required this.onLaunchTeleprompter,
     required this.onBack,
     this.isLibrarySong = false,
+    this.backDispatcher,
   });
 
   @override
@@ -28,14 +41,21 @@ class EditorView extends StatefulWidget {
 }
 
 class _EditorViewState extends State<EditorView> {
-  late final TextEditingController _textController;
+  late final FormattedTextController _textController;
   late final TextEditingController _titleController;
   late final FileService _fileService;
+  final _formattingService = FormattingService();
+  // Taps on the formatting toolbar count as taps in the lyrics, so the
+  // selection survives them
+  final _lyricsTapGroup = Object();
+  String _lastText = '';
+  ScriptFormatting _lastFormatting = ScriptFormatting.empty;
   Script _previewScript = Script.empty();
   String _currentTitle = 'Untitled';
   Timer? _autosaveTimer;
   Timer? _parseDebounce;
   bool _isDirty = false;
+  bool _showPreview = false; // phones show lyrics or preview, not both
 
   // Title of the library song this editor saves to; null until a new
   // script is saved for the first time.
@@ -49,10 +69,14 @@ class _EditorViewState extends State<EditorView> {
     _fileService = FileService();
     _currentTitle = widget.initialScript.title;
     if (widget.isLibrarySong) _savedTitle = _currentTitle;
-    _textController = TextEditingController(text: widget.initialScript.rawText);
+    _textController = FormattedTextController(
+      text: widget.initialScript.rawText,
+    );
+    _lastText = widget.initialScript.rawText;
     _titleController = TextEditingController(text: _currentTitle);
     _previewScript = widget.initialScript;
     _textController.addListener(_onTextChanged);
+    _loadFormatting();
 
     // Auto-select the title and focus it so the user immediately knows to rename
     if (_currentTitle == _defaultTitle) {
@@ -66,12 +90,14 @@ class _EditorViewState extends State<EditorView> {
     }
 
     _scheduleAutosave();
+    widget.backDispatcher?.register(_goHome);
   }
 
   final _titleFocus = FocusNode();
 
   @override
   void dispose() {
+    widget.backDispatcher?.unregister(_goHome);
     _autosaveTimer?.cancel();
     _parseDebounce?.cancel();
     _textController.dispose();
@@ -80,10 +106,34 @@ class _EditorViewState extends State<EditorView> {
     super.dispose();
   }
 
+  Future<void> _loadFormatting() async {
+    if (widget.initialScript.isEmpty) return;
+    final loaded = await _formattingService.load(_currentTitle);
+    if (!mounted || loaded.isEmpty) return;
+    final formatting = loaded.upgraded(widget.initialScript);
+    _lastFormatting = formatting;
+    _textController.formatting = formatting;
+    setState(() {});
+  }
+
+  // The controller also reports caret moves; only real changes count
   void _onTextChanged() {
+    final textChanged = _textController.text != _lastText;
+    final formatChanged = !identical(
+      _textController.formatting,
+      _lastFormatting,
+    );
+    _lastText = _textController.text;
+    _lastFormatting = _textController.formatting;
+    if (!textChanged && !formatChanged) {
+      setState(() {}); // the toolbar follows the selection
+      return;
+    }
     setState(() => _isDirty = true);
-    _parseDebounce?.cancel();
-    _parseDebounce = Timer(const Duration(milliseconds: 400), _reparseScript);
+    if (textChanged) {
+      _parseDebounce?.cancel();
+      _parseDebounce = Timer(const Duration(milliseconds: 400), _reparseScript);
+    }
   }
 
   void _reparseScript() {
@@ -106,11 +156,14 @@ class _EditorViewState extends State<EditorView> {
   /// title, never overwrites a different song with the same name.
   Future<String?> _save() async {
     if (_textController.text.trim().isEmpty) return null;
-    var title = _currentTitle.trim().isEmpty ? _defaultTitle : _currentTitle.trim();
+    var title = _currentTitle.trim().isEmpty
+        ? _defaultTitle
+        : _currentTitle.trim();
     if (title != _savedTitle) {
       title = await _fileService.uniqueLibraryTitle(title);
     }
     final path = await _fileService.saveToLibrary(_textController.text, title);
+    await _formattingService.save(title, _textController.formatting);
     _savedTitle = title;
     if (mounted) {
       if (title != _currentTitle) _titleController.text = title;
@@ -123,18 +176,19 @@ class _EditorViewState extends State<EditorView> {
   }
 
   void _showSnack(String message, [ScaffoldMessengerState? messenger]) {
-    (messenger ?? ScaffoldMessenger.of(context)).showSnackBar(SnackBar(
-      content: Text(message),
-      duration: const Duration(seconds: 2),
-    ));
+    (messenger ?? ScaffoldMessenger.of(context)).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
   }
 
   Future<void> _saveNow() async {
     final saved = await _save() != null;
     if (!mounted) return;
-    _showSnack(saved
-        ? 'Saved "$_currentTitle".'
-        : 'Nothing to save — add some lyrics first.');
+    _showSnack(
+      saved
+          ? 'Saved "$_currentTitle".'
+          : 'Nothing to save — add some lyrics first.',
+    );
   }
 
   // Leaving never drops edits: unsaved changes are saved first.
@@ -152,6 +206,7 @@ class _EditorViewState extends State<EditorView> {
     setState(() {
       _currentTitle = result.title;
       _textController.text = result.content;
+      _textController.formatting = ScriptFormatting.empty;
       _isDirty = true; // becomes a song in the library when saved
     });
     _titleController.text = result.title;
@@ -176,7 +231,9 @@ class _EditorViewState extends State<EditorView> {
     if (setlists.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Saved to library. Create a setlist on the home screen to add it.'),
+          content: Text(
+            'Saved to library. Create a setlist on the home screen to add it.',
+          ),
           duration: Duration(seconds: 3),
         ),
       );
@@ -201,7 +258,9 @@ class _EditorViewState extends State<EditorView> {
     if (!alreadyIn) {
       final item = SetlistItem.song(path: path, title: _currentTitle);
       final updated = target.copyWith(items: [...target.items, item]);
-      final newSetlists = setlists.map((s) => s.id == updated.id ? updated : s).toList();
+      final newSetlists = setlists
+          .map((s) => s.id == updated.id ? updated : s)
+          .toList();
       await SetlistService().save(newSetlists);
     }
 
@@ -231,17 +290,149 @@ class _EditorViewState extends State<EditorView> {
     if (!mounted) return;
     // Parsed after saving, which may have given a new song a unique title
     widget.onLaunchTeleprompter(
-        ScriptParser.parse(_textController.text, title: _currentTitle));
+      ScriptParser.parse(_textController.text, title: _currentTitle),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 700) {
+            return Column(
+              children: [
+                _buildPhoneToolbar(),
+                Expanded(
+                  child: _showPreview ? _buildPreview() : _buildEditor(),
+                ),
+              ],
+            );
+          }
+          return Column(
+            children: [
+              _buildToolbar(),
+              Expanded(child: _buildBody()),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Two rows: title and launch, then lyrics/preview and the file actions
+  Widget _buildPhoneToolbar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.background,
+        border: Border(bottom: BorderSide(color: AppColors.hairline)),
+      ),
+      padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
+      child: Column(
         children: [
-          _buildToolbar(),
-          Expanded(child: _buildBody()),
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Back — changes are saved',
+                onPressed: _goHome,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              Expanded(child: _titleField()),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                tooltip: 'Launch',
+                onPressed: _launch,
+                style: IconButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: AppColors.onAccent,
+                ),
+                icon: const Icon(Icons.play_arrow_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const SizedBox(width: 8),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Lyrics')),
+                  ButtonSegment(value: true, label: Text('Preview')),
+                ],
+                selected: {_showPreview},
+                onSelectionChanged: (s) {
+                  FocusScope.of(context).unfocus();
+                  setState(() => _showPreview = s.first);
+                },
+                style: SegmentedButton.styleFrom(
+                  foregroundColor: AppColors.uiText,
+                  selectedForegroundColor: AppColors.textPrimary,
+                  selectedBackgroundColor: AppColors.surfaceSelected,
+                  side: const BorderSide(color: AppColors.border),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: _isDirty ? 'Save — unsaved changes' : 'Saved',
+                onPressed: _saveNow,
+                icon: Badge(
+                  isLabelVisible: _isDirty,
+                  smallSize: 7,
+                  backgroundColor: AppColors.accent,
+                  child: const Icon(
+                    Icons.save_rounded,
+                    color: AppColors.uiText,
+                  ),
+                ),
+              ),
+              PopupMenuButton<VoidCallback>(
+                tooltip: 'More',
+                onSelected: (action) => action(),
+                icon: const Icon(
+                  Icons.more_vert_rounded,
+                  color: AppColors.uiText,
+                ),
+                itemBuilder: (_) => [
+                  _phoneMenuItem(
+                    Icons.library_add_rounded,
+                    'Add to a setlist',
+                    _addToSetlist,
+                  ),
+                  _phoneMenuItem(
+                    Icons.folder_open_rounded,
+                    'Open a lyrics file',
+                    _openFile,
+                  ),
+                  _phoneMenuItem(
+                    Icons.ios_share_rounded,
+                    'Save a copy as a file',
+                    _exportFile,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuItem<VoidCallback> _phoneMenuItem(
+    IconData icon,
+    String label,
+    VoidCallback action,
+  ) {
+    return PopupMenuItem<VoidCallback>(
+      value: action,
+      height: 48,
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: AppColors.uiText),
+          const SizedBox(width: 14),
+          Text(label, style: const TextStyle(fontSize: 15)),
         ],
       ),
     );
@@ -304,67 +495,69 @@ class _EditorViewState extends State<EditorView> {
                 onTap: _addToSetlist,
               ),
               const SizedBox(width: 16),
-              Expanded(
-                child: Tooltip(
-                  message: 'Song title — shown in the setlist and teleprompter',
-                  child: Container(
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _titleFocus.hasFocus
-                            ? AppColors.accent.withValues(alpha: 0.7)
-                            : AppColors.border,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: const BoxDecoration(
-                            border: Border(
-                              right: BorderSide(color: AppColors.hairline, width: 1),
-                            ),
-                          ),
-                          child: const Text('TITLE', style: AppTextStyles.eyebrow),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: _titleController,
-                            focusNode: _titleFocus,
-                            decoration: const InputDecoration(
-                              hintText: 'Song title',
-                              hintStyle: TextStyle(
-                                fontFamily: AppTextStyles.ui,
-                                color: AppColors.uiMuted,
-                                fontSize: 15,
-                              ),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              isDense: true,
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12),
-                            ),
-                            style: const TextStyle(
-                              fontFamily: AppTextStyles.ui,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                            onChanged: (v) => setState(() => _currentTitle = v),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              Expanded(child: _titleField()),
               const SizedBox(width: 16),
               _launchButton(),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _titleField() {
+    return Tooltip(
+      message: 'Song title — shown in the setlist and teleprompter',
+      child: Container(
+        height: 42,
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: _titleFocus.hasFocus
+                ? AppColors.accent.withValues(alpha: 0.7)
+                : AppColors.border,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: const BoxDecoration(
+                border: Border(
+                  right: BorderSide(color: AppColors.hairline, width: 1),
+                ),
+              ),
+              child: const Text('TITLE', style: AppTextStyles.eyebrow),
+            ),
+            Expanded(
+              child: TextField(
+                controller: _titleController,
+                focusNode: _titleFocus,
+                decoration: const InputDecoration(
+                  hintText: 'Song title',
+                  hintStyle: TextStyle(
+                    fontFamily: AppTextStyles.ui,
+                    color: AppColors.uiMuted,
+                    fontSize: 15,
+                  ),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                ),
+                style: const TextStyle(
+                  fontFamily: AppTextStyles.ui,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+                onChanged: (v) => setState(() => _currentTitle = v),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -380,47 +573,79 @@ class _EditorViewState extends State<EditorView> {
   }
 
   Widget _buildEditor() {
+    final narrow = MediaQuery.sizeOf(context).width < 700;
     return Container(
       color: AppColors.background,
-      padding: const EdgeInsets.fromLTRB(32, 24, 24, 16),
+      padding: narrow
+          ? const EdgeInsets.fromLTRB(20, 16, 16, 8)
+          : const EdgeInsets.fromLTRB(32, 24, 24, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('LYRICS', style: AppTextStyles.eyebrow),
           const SizedBox(height: 6),
           const Text(
-            'Put sections on their own line: [Verse 1], [Chorus], or [Intro | 4 bars]',
+            'Sections: use the Section button, or put [Verse 1], (Chorus), Chorus: or # Chorus on its own line',
             style: TextStyle(
               fontFamily: AppTextStyles.ui,
               fontSize: 13,
               color: AppColors.uiHint,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          LyricsFormatToolbar(
+            controller: _textController,
+            tapGroup: _lyricsTapGroup,
+          ),
+          const SizedBox(height: 12),
           Expanded(
-            child: TextField(
-              controller: _textController,
-              maxLines: null,
-              expands: true,
-              style: const TextStyle(
-                fontFamily: AppTextStyles.mono,
-                fontSize: 15,
-                color: AppColors.textPrimary,
-                height: 1.7,
+            child: CallbackShortcuts(
+              bindings: _formatShortcuts(),
+              child: TextField(
+                controller: _textController,
+                groupId: _lyricsTapGroup,
+                maxLines: null,
+                expands: true,
+                style: const TextStyle(
+                  fontFamily: AppTextStyles.mono,
+                  fontSize: 15,
+                  color: AppColors.textPrimary,
+                  height: 1.7,
+                ),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  hintText:
+                      '[Intro | 4 bars]\n\nYour lyrics here...\n\n[Verse 1]\n\nLine one\nLine two',
+                  hintStyle: TextStyle(
+                    fontFamily: AppTextStyles.mono,
+                    color: AppColors.uiMuted,
+                  ),
+                ),
+                textAlignVertical: TextAlignVertical.top,
               ),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                hintText: '[Intro | 4 bars]\n\nYour lyrics here...\n\n[Verse 1]\n\nLine one\nLine two',
-                hintStyle: TextStyle(fontFamily: AppTextStyles.mono, color: AppColors.uiMuted),
-              ),
-              textAlignVertical: TextAlignVertical.top,
             ),
           ),
         ],
       ),
     );
+  }
+
+  // Ctrl on Windows, ⌘ on a Mac
+  Map<ShortcutActivator, VoidCallback> _formatShortcuts() {
+    final mac =
+        AppPlatform.isDesktop && defaultTargetPlatform == TargetPlatform.macOS;
+    SingleActivator key(LogicalKeyboardKey k) =>
+        SingleActivator(k, control: !mac, meta: mac);
+    return {
+      key(LogicalKeyboardKey.keyB): _textController.toggleBold,
+      key(LogicalKeyboardKey.bracketRight): () =>
+          _textController.stepFontSize(1),
+      key(LogicalKeyboardKey.bracketLeft): () =>
+          _textController.stepFontSize(-1),
+      key(LogicalKeyboardKey.backslash): _textController.clearStyle,
+    };
   }
 
   Widget _buildPreview() {
@@ -472,14 +697,20 @@ class _EditorViewState extends State<EditorView> {
                         );
                       }
                       if (line.isEmpty) return const SizedBox(height: 6);
+                      const style = TextStyle(
+                        fontFamily: AppTextStyles.mono,
+                        fontSize: 13,
+                        color: AppColors.uiText,
+                      );
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          line.text,
-                          style: const TextStyle(
-                            fontFamily: AppTextStyles.mono,
-                            fontSize: 13,
-                            color: AppColors.uiText,
+                        child: Text.rich(
+                          TextSpan(
+                            children: formattedSpans(
+                              line.text,
+                              _textController.formatting.forLine(line),
+                              style,
+                            ),
                           ),
                         ),
                       );
@@ -558,29 +789,34 @@ class _SetlistPickerDialog extends StatelessWidget {
         width: 280,
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: setlists.map((s) => ListTile(
-            dense: true,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
-            title: Text(
-              s.name,
-              style: const TextStyle(
-                fontFamily: AppTextStyles.ui,
-                color: AppColors.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            trailing: Text(
-              _songCount(s.items.where((i) => i.isSong).length),
-              style: const TextStyle(
-                fontFamily: AppTextStyles.ui,
-                color: AppColors.uiHint,
-                fontSize: 12,
-              ),
-            ),
-            onTap: () => Navigator.pop(context, s),
-          )).toList(),
+          children: setlists
+              .map(
+                (s) => ListTile(
+                  dense: true,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  title: Text(
+                    s.name,
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.ui,
+                      color: AppColors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  trailing: Text(
+                    _songCount(s.items.where((i) => i.isSong).length),
+                    style: const TextStyle(
+                      fontFamily: AppTextStyles.ui,
+                      color: AppColors.uiHint,
+                      fontSize: 12,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(context, s),
+                ),
+              )
+              .toList(),
         ),
       ),
       actions: [

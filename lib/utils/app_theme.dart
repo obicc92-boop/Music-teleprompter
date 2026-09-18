@@ -56,6 +56,15 @@ ThemeData buildAppTheme() {
       ),
     ),
 
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: AppColors.surfaceElevated,
+      surfaceTintColor: Colors.transparent,
+      dragHandleColor: AppColors.borderStrong,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+    ),
+
     popupMenuTheme: PopupMenuThemeData(
       color: AppColors.surfaceElevated,
       surfaceTintColor: Colors.transparent,

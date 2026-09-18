@@ -29,7 +29,12 @@ class RemoteControlServer {
   String? get url => _localIp != null ? 'http://$_localIp:$_port' : null;
   bool get isRunning => _server != null;
 
+  /// Built with `--dart-define=MT_NO_REMOTE=true`, the server never starts:
+  /// automated test runs would otherwise trip the firewall prompt on Windows.
+  static const _disabled = bool.fromEnvironment('MT_NO_REMOTE');
+
   Future<String?> start() async {
+    if (_disabled) return null;
     if (_server != null) return url;
     try {
       _localIp = await _getLocalIp();

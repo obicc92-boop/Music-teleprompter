@@ -14,12 +14,17 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
   final VoidCallback? onPrevScript;
   final VoidCallback? onToggleMirror;
   final VoidCallback? onTapTempo;
+  final VoidCallback? onEdit;
   final VoidCallback? onPlayPauseOverride;
   final String pedalAction;
 
   /// Lets the owner give keys back after something else (e.g. the timing
   /// recorder) held focus.
   final FocusNode? focusNode;
+
+  /// False while something on screen types (a line being edited), so
+  /// letters and Space reach it instead of driving the song.
+  final bool enabled;
 
   // Optional overrides for section jumps — called instead of scrollEngine directly.
   // Use these when you need side effects (e.g. seeking audio) on section change.
@@ -37,9 +42,11 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
     this.onPrevScript,
     this.onToggleMirror,
     this.onTapTempo,
+    this.onEdit,
     this.onPlayPauseOverride,
     this.pedalAction = 'nextSection',
     this.focusNode,
+    this.enabled = true,
     this.onJumpNextSection,
     this.onJumpPrevSection,
   });
@@ -82,6 +89,7 @@ class _TeleprompterKeyboardHandlerState
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (!widget.enabled) return KeyEventResult.ignored;
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
@@ -144,6 +152,10 @@ class _TeleprompterKeyboardHandlerState
     }
     if (key == LogicalKeyboardKey.keyN) {
       widget.onNextScript?.call();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyE) {
+      widget.onEdit?.call();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyP) {

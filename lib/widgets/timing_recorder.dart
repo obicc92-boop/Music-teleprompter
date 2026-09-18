@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../engine/scroll_engine.dart';
 import '../models/script.dart';
+import '../utils/app_platform.dart';
 import '../utils/constants.dart';
 
-/// Rehearsal mode for timing a song: tap Space or the foot pedal as the song
-/// starts and then as each line starts. The taps become the song's timing,
-/// so at the show the lyrics follow the way it was rehearsed.
+/// Rehearsal mode for timing a song: press Space, the foot pedal, or tap the
+/// screen on a phone as the song starts and then as each line starts. The taps
+/// become the song's timing, so at the show the lyrics follow the way it was
+/// rehearsed.
 class TimingRecorder extends StatefulWidget {
   final Script script;
   final ScrollEngine scrollEngine;
@@ -27,10 +29,10 @@ class TimingRecorder extends StatefulWidget {
   });
 
   @override
-  State<TimingRecorder> createState() => _TimingRecorderState();
+  State<TimingRecorder> createState() => TimingRecorderState();
 }
 
-class _TimingRecorderState extends State<TimingRecorder> {
+class TimingRecorderState extends State<TimingRecorder> {
   final _focusNode = FocusNode(debugLabel: 'TimingRecorder');
   final _stopwatch = Stopwatch();
   Timer? _clockTimer;
@@ -67,6 +69,9 @@ class _TimingRecorderState extends State<TimingRecorder> {
     });
     setState(() {});
   }
+
+  /// One line timed. On a phone the whole screen is the tap target.
+  void tap() => _tap();
 
   void _tap() {
     if (!_started) return _start();
@@ -194,13 +199,18 @@ class _TimingRecorderState extends State<TimingRecorder> {
   }
 
   String get _instruction {
+    final press = AppPlatform.isTouch ? 'tap the screen' : 'press Space or the pedal';
     if (!_started) {
-      return 'Start the song, then press Space or the pedal right when it begins. '
+      return 'Start the song, then $press right when it begins. '
           '${widget.replacesTiming ? "Saving replaces this song's current timing." : ''}';
     }
-    if (_done) return 'Press Enter or the pedal to save · ↑ redoes the last line';
+    if (_done) {
+      return AppPlatform.isTouch
+          ? 'Every line is timed — save it below · Undo redoes the last line'
+          : 'Press Enter or the pedal to save · ↑ redoes the last line';
+    }
     final next = widget.script.allLines[_lyricLines[_taps.length]].text.trim();
-    return 'Tap as this line starts: “$next”';
+    return '${AppPlatform.isTouch ? "Tap the screen" : "Tap"} as this line starts: “$next”';
   }
 
   @override
@@ -215,45 +225,76 @@ class _TimingRecorderState extends State<TimingRecorder> {
             border: Border(bottom: BorderSide(color: AppColors.hairline)),
           ),
           padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
-          child: Row(
-            children: [
-              _RecBadge(recording: _started && !_done, clock: _started ? _clock : null),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          child: MediaQuery.sizeOf(context).width < 640
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_headline, style: _titleStyle),
-                    const SizedBox(height: 2),
-                    Text(
-                      _instruction,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: _bodyStyle,
+                    Row(
+                      children: [
+                        _RecBadge(
+                          recording: _started && !_done,
+                          clock: _started ? _clock : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: _headlineAndInstruction()),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: _buttons(),
                     ),
                   ],
+                )
+              : Row(
+                  children: [
+                    _RecBadge(
+                      recording: _started && !_done,
+                      clock: _started ? _clock : null,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(child: _headlineAndInstruction()),
+                    const SizedBox(width: 12),
+                    ..._buttons(),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 12),
-              if (_started)
-                _button('Undo', Icons.undo_rounded, _taps.isEmpty ? null : _undo,
-                    tooltip: 'Redo the last line (↑)'),
-              _button('Cancel', Icons.close_rounded, _cancel, tooltip: 'Esc'),
-              const SizedBox(width: 4),
-              _started
-                  ? _primaryButton('Save', _canSave ? _save : null,
-                      tooltip: _done
-                          ? 'Save this timing (Enter)'
-                          : 'Save now — untimed lines keep the same pace')
-                  : _primaryButton('Start', _start,
-                      tooltip: 'Press when the song starts (Space)'),
-            ],
-          ),
         ),
       ),
     );
   }
+
+  Widget _headlineAndInstruction() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(_headline, style: _titleStyle),
+        const SizedBox(height: 2),
+        Text(
+          _instruction,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: _bodyStyle,
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buttons() => [
+        if (_started)
+          _button('Undo', Icons.undo_rounded, _taps.isEmpty ? null : _undo,
+              tooltip: 'Redo the last line (↑)'),
+        _button('Cancel', Icons.close_rounded, _cancel, tooltip: 'Esc'),
+        const SizedBox(width: 4),
+        _started
+            ? _primaryButton('Save', _canSave ? _save : null,
+                tooltip: _done
+                    ? 'Save this timing (Enter)'
+                    : 'Save now — untimed lines keep the same pace')
+            : _primaryButton('Start', _start,
+                tooltip: 'Press when the song starts (Space)'),
+      ];
 
   // Clicking a button would take focus away from the keys, so give it back
   VoidCallback? _refocusAfter(VoidCallback? action) => action == null

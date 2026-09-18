@@ -44,6 +44,9 @@ class ScrollEngine extends ChangeNotifier {
   int get loopStartLine => _loopStartLine;
   int get loopEndLine => _loopEndLine;
   bool get isTimed => _timeline.isNotEmpty;
+
+  /// The timed lines: (line, seconds), both ascending.
+  List<(int, double)> get timeline => _timeline;
   double get clockSeconds => _clock;
 
   ScrollEngine({required SyncEngine syncEngine}) : _syncEngine = syncEngine;

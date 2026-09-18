@@ -1,27 +1,40 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import '../models/setlist_models.dart';
+import '../utils/app_platform.dart';
 import '../utils/constants.dart';
+import 'file_service.dart';
 import 'song_settings_store.dart';
 
 class SetlistExportService {
   /// Writes a print-ready HTML file to Downloads and opens it in the browser.
   /// Returns the path on success, null on failure.
+  /// On a phone or tablet it asks where to save the page instead, since
+  /// there's no browser to hand it to.
   static Future<String?> exportHtml(Setlist setlist) async {
     try {
-      final dir = await getDownloadsDirectory() ??
-          await getApplicationDocumentsDirectory();
       final safeName =
           setlist.name.replaceAll(RegExp(r'[^\w\s\-]'), '').trim();
       final fileName =
           '${safeName.isEmpty ? 'Setlist' : safeName}_${DateTime.now().millisecondsSinceEpoch}.html';
-      final file = File('${dir.path}/$fileName');
       final songSpeeds = <String, double?>{
         for (final item in setlist.items.where((i) => i.isSong))
           item.title:
               (await SongSettingsStore.getSettings(item.title)).scrollSpeedMultiplier,
       };
-      await file.writeAsString(_buildHtml(setlist, songSpeeds));
+      final html = _buildHtml(setlist, songSpeeds);
+      if (AppPlatform.isMobile) {
+        return FileService.saveTextFile(
+          content: html,
+          fileName: fileName,
+          dialogTitle: 'Save setlist',
+          extensions: ['html'],
+        );
+      }
+      final dir = await getDownloadsDirectory() ??
+          await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/$fileName');
+      await file.writeAsString(html);
       await _openFile(file.path);
       return file.path;
     } catch (_) {

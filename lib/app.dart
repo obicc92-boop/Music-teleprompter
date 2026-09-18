@@ -14,7 +14,9 @@ import 'views/home_view.dart';
 import 'views/editor_view.dart';
 import 'views/teleprompter_view.dart';
 import 'views/settings_view.dart';
+import 'utils/app_platform.dart';
 import 'utils/app_theme.dart';
+import 'utils/back_dispatcher.dart';
 import 'widgets/window_title_bar.dart';
 
 enum AppScreen { home, editor, teleprompter }
@@ -58,18 +60,19 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
 
   final SyncEngine _syncEngine = SyncEngine();
   final FileService _fileService = FileService();
+  final BackDispatcher _back = BackDispatcher();
 
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
+    if (AppPlatform.isDesktop) windowManager.addListener(this);
     _syncEngine.addListener(_onSyncEngineChanged);
     _loadSettings();
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (AppPlatform.isDesktop) windowManager.removeListener(this);
     _syncEngine.removeListener(_onSyncEngineChanged);
     _syncEngine.dispose();
     super.dispose();
@@ -232,6 +235,17 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     });
   }
 
+  // Editing mid-show keeps the setlist, so Launch brings the song back with
+  // Next and Previous still working
+  void _editFromTeleprompter() {
+    _syncEngine.stop();
+    setState(() {
+      _editorSetlist = _setlist;
+      _editorSetlistIndex = _setlistIndex;
+      _screen = AppScreen.editor;
+    });
+  }
+
   bool get _hasNextScript =>
       _launchedFromHome && _setlistIndex < _setlist.length - 1;
 
@@ -276,16 +290,59 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
       title: 'Music Teleprompter',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
-      home: Stack(
-        children: [
-          Column(
-            children: [
-              if (_screen != AppScreen.teleprompter) const WindowTitleBar(),
-              Expanded(child: _buildCurrentScreen()),
-            ],
+      // Messages and dialogs sized to the screen, so they fit a phone too
+      builder: (context, child) {
+        final width = MediaQuery.sizeOf(context).width;
+        final theme = Theme.of(context);
+        return Theme(
+          data: theme.copyWith(
+            snackBarTheme: theme.snackBarTheme.copyWith(
+              width: width < 600 ? width - 24 : 560,
+            ),
+            dialogTheme: theme.dialogTheme.copyWith(
+              insetPadding: EdgeInsets.symmetric(
+                horizontal: width < 600 ? 16 : 40,
+                vertical: 24,
+              ),
+            ),
           ),
-          if (_showSettings) _buildSettingsOverlay(),
-        ],
+          child: child!,
+        );
+      },
+      home: PopScope(
+        // Android's back gesture: closes Settings, leaves the editor or a
+        // song through their own handlers, and only exits from home
+        canPop: _screen == AppScreen.home && !_showSettings,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          if (_showSettings) {
+            setState(() => _showSettings = false);
+          } else {
+            _back.handle();
+          }
+        },
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                if (AppPlatform.isDesktop && _screen != AppScreen.teleprompter)
+                  const WindowTitleBar(),
+                Expanded(
+                  // The song screen is full screen; other screens keep clear
+                  // of the status bar, camera cutout and gesture bar
+                  child: SafeArea(
+                    top: _screen != AppScreen.teleprompter,
+                    bottom: _screen != AppScreen.teleprompter,
+                    left: _screen != AppScreen.teleprompter,
+                    right: _screen != AppScreen.teleprompter,
+                    child: _buildCurrentScreen(),
+                  ),
+                ),
+              ],
+            ),
+            if (_showSettings) _buildSettingsOverlay(),
+          ],
+        ),
       ),
     );
   }
@@ -308,6 +365,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           onLaunchTeleprompter: _launchTeleprompter,
           onBack: _backToHome,
           isLibrarySong: _editorSetlist.isNotEmpty,
+          backDispatcher: _back,
         );
       case AppScreen.teleprompter:
         return TeleprompterView(
@@ -325,6 +383,9 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           songHasOwnTheme: _songSettings.colorTheme != null,
           onThemeChanged: _setSongTheme,
           onThemeReset: _resetSongTheme,
+          backDispatcher: _back,
+          onEdit: _editFromTeleprompter,
+          onScriptChanged: (script) => _activeScript = script,
           setlistPosition: _launchedFromHome
               ? '${_setlistIndex + 1} / ${_setlist.length}'
               : null,
@@ -360,6 +421,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           alignment: Alignment.center,
           child: GestureDetector(
             onTap: () {},
+            // On a phone the panel fills the screen, clear of the system bars
             child: SettingsView(
               settings: onSong ? _activeSongSettings : _settings,
               songTitle: onSong ? _activeScript.title : null,

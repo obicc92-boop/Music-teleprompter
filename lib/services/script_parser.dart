@@ -8,6 +8,47 @@ class ScriptParser {
     caseSensitive: false,
   );
 
+  // Not every keyboard has square brackets, so "# Chorus", "(Chorus)" and
+  // "Chorus:" mark a section too. Lyrics often hold "(oh yeah)" or end in a
+  // colon, so those two forms only count when they name a section word.
+  static final _hashHeaderRegex = RegExp(
+    r'^#+\s*([^|#][^|]*?)\s*(?:\|\s*(\d+)\s*bars?)?$',
+    caseSensitive: false,
+  );
+  static final _parenHeaderRegex = RegExp(
+    r'^\(([^)|]+?)(?:\s*\|\s*(\d+)\s*bars?)?\)$',
+    caseSensitive: false,
+  );
+  static final _colonHeaderRegex = RegExp(
+    r"^([A-Za-z][A-Za-z0-9'\- ]{0,30}?)\s*(?:\|\s*(\d+)\s*bars?)?\s*:$",
+  );
+  static final _sectionWords = RegExp(
+    r'\b(intro|verse|pre-?chorus|chorus|refrain|hook|bridge|solo|outro|'
+    r'interlude|break(?:down)?|instrumental|tag|coda|ending|drop|vamp|'
+    r'middle ?8|turnaround)\b',
+    caseSensitive: false,
+  );
+
+  /// The section a line names, or null for a lyric line.
+  static ({String label, int? bars})? sectionHeader(String trimmed) {
+    var match = _sectionHeaderRegex.firstMatch(trimmed) ??
+        _hashHeaderRegex.firstMatch(trimmed);
+    if (match == null) {
+      match = _parenHeaderRegex.firstMatch(trimmed) ??
+          _colonHeaderRegex.firstMatch(trimmed);
+      if (match == null) return null;
+      final label = match.group(1)!.trim();
+      if (label.split(RegExp(r'\s+')).length > 3 ||
+          !_sectionWords.hasMatch(label)) {
+        return null;
+      }
+    }
+    return (
+      label: match.group(1)!.trim().toUpperCase(),
+      bars: match.group(2) != null ? int.tryParse(match.group(2)!) : null,
+    );
+  }
+
   static final _lrcTimestampRegex = RegExp(r'^\[(\d+):(\d+\.\d+)\](.*)$');
   // LRC Enhanced: <mm:ss.xx> or <mm:ss.xxx> word-level markers inside a line
   static final _lrcWordTimestampRegex = RegExp(r'<(\d+):(\d+\.\d+)>([^<]*)');
@@ -98,9 +139,9 @@ class ScriptParser {
           ));
         }
       } else if (trimmed.isNotEmpty) {
-        final sectionMatch = _sectionHeaderRegex.firstMatch(trimmed);
-        if (sectionMatch != null) {
-          result.add(_buildSectionHeader(sectionMatch));
+        final section = sectionHeader(trimmed);
+        if (section != null) {
+          result.add(_buildSectionHeader(section));
         }
       }
     }
@@ -214,9 +255,9 @@ class ScriptParser {
       }
 
       // Plain section header [Verse 1] — only reached when no chord tokens present
-      final sectionMatch = _sectionHeaderRegex.firstMatch(trimmed);
-      if (sectionMatch != null) {
-        result.add(_buildSectionHeader(sectionMatch));
+      final section = sectionHeader(trimmed);
+      if (section != null) {
+        result.add(_buildSectionHeader(section));
         continue;
       }
 
@@ -265,34 +306,36 @@ class ScriptParser {
 
   static List<ScriptLine> _parsePlainText(String text) {
     final result = <ScriptLine>[];
+    var offset = 0; // where the current raw line starts in the text
     for (final rawLine in text.split('\n')) {
       final trimmed = rawLine.trim();
       if (trimmed.isEmpty) {
-        result.add(const ScriptLine(text: '', words: []));
-        continue;
-      }
-      final sectionMatch = _sectionHeaderRegex.firstMatch(trimmed);
-      if (sectionMatch != null) {
-        result.add(_buildSectionHeader(sectionMatch));
+        result.add(ScriptLine(text: '', words: [], rawStart: offset));
       } else {
-        result.add(ScriptLine(
-          text: trimmed,
-          words: _tokenize(trimmed),
-        ));
+        final section = sectionHeader(trimmed);
+        if (section != null) {
+          result.add(_buildSectionHeader(section)
+              .copyWith(rawStart: offset + rawLine.indexOf(trimmed)));
+        } else {
+          result.add(ScriptLine(
+            text: trimmed,
+            words: _tokenize(trimmed),
+            rawStart: offset + rawLine.indexOf(trimmed),
+          ));
+        }
       }
+      offset += rawLine.length + 1;
     }
     return result;
   }
 
-  static ScriptLine _buildSectionHeader(RegExpMatch match) {
-    final label = match.group(1)!.trim().toUpperCase();
-    final bars = match.group(2) != null ? int.tryParse(match.group(2)!) : null;
+  static ScriptLine _buildSectionHeader(({String label, int? bars}) section) {
     return ScriptLine(
-      text: label,
+      text: section.label,
       words: [],
       isSectionHeader: true,
-      sectionLabel: label,
-      barCount: bars,
+      sectionLabel: section.label,
+      barCount: section.bars,
     );
   }
 

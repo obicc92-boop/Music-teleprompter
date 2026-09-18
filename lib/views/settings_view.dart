@@ -47,6 +47,17 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // A phone has no room for a fourth tab: the shortcut list sits under
+    // Controls, beside the foot pedal settings it belongs with
+    if (MediaQuery.sizeOf(context).width < 700 &&
+        _section == SettingsSection.shortcuts) {
+      _section = SettingsSection.controls;
+    }
+  }
+
+  @override
   void didUpdateWidget(SettingsView oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Picks up changes made outside the panel, e.g. Reset to default
@@ -62,6 +73,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width < 700) return _buildFullScreen();
     // Same size on every tab, so the tabs don't move under the pointer
     final height = (MediaQuery.of(context).size.height - 80).clamp(0.0, 640.0);
     return Material(
@@ -91,6 +103,28 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
+  // A phone: the whole screen, with the tabs across the top
+  Widget _buildFullScreen() {
+    return SizedBox.expand(
+      child: Material(
+        color: AppColors.surface,
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _TabStrip(
+                selected: _section,
+                onSelected: (s) => setState(() => _section = s),
+              ),
+              _Divider(),
+              Expanded(child: _buildContent()),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildContent() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -113,16 +147,30 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         Flexible(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
-            child: switch (_section) {
-              SettingsSection.display   => _displayPanel(),
-              SettingsSection.playback  => _playbackPanel(),
-              SettingsSection.controls  => _controlsPanel(),
-              SettingsSection.shortcuts => _shortcutsPanel(),
-            },
+            padding: MediaQuery.sizeOf(context).width < 700
+                ? const EdgeInsets.fromLTRB(20, 8, 20, 28)
+                : const EdgeInsets.fromLTRB(24, 8, 24, 28),
+            child: _panel(),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _panel() {
+    final panel = switch (_section) {
+      SettingsSection.display => _displayPanel(),
+      SettingsSection.playback => _playbackPanel(),
+      SettingsSection.controls => _controlsPanel(),
+      SettingsSection.shortcuts => _shortcutsPanel(),
+    };
+    if (MediaQuery.sizeOf(context).width >= 700 ||
+        _section != SettingsSection.controls) {
+      return panel;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [panel, const SizedBox(height: 24), _shortcutsPanel()],
     );
   }
 
@@ -320,6 +368,8 @@ class _SettingsViewState extends State<SettingsView> {
           rows: const [
             ('F', 'Toggle fullscreen'),
             ('M', 'Toggle mirror mode'),
+            ('E', 'Edit lyrics'),
+            ('Double-click a line', 'Edit it where it is'),
             ('Esc', 'Back to setlist'),
           ],
         ),
@@ -417,6 +467,77 @@ class _Sidebar extends StatelessWidget {
   }
 }
 
+/// The sections as tabs across the top, for a phone.
+class _TabStrip extends StatelessWidget {
+  final SettingsSection selected;
+  final ValueChanged<SettingsSection> onSelected;
+
+  const _TabStrip({required this.selected, required this.onSelected});
+
+  // Shortcuts has no tab of its own here: its list sits under Controls
+  static const _tabs = [
+    (SettingsSection.display, Icons.text_fields_rounded, 'Display'),
+    (SettingsSection.playback, Icons.tune_rounded, 'Playback'),
+    (SettingsSection.controls, Icons.keyboard_rounded, 'Controls'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(6, 8, 6, 8),
+      child: Row(
+        children: [
+          for (final (section, icon, label) in _tabs)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Material(
+                color: section == selected
+                    ? AppColors.surfaceSelected
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => onSelected(section),
+                  child: Padding(
+                    // Tight enough that all four fit a small phone
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          icon,
+                          size: 17,
+                          color: section == selected
+                              ? AppColors.accentText
+                              : AppColors.uiText,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontFamily: AppTextStyles.ui,
+                            fontSize: 13,
+                            fontWeight: section == selected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                            color: section == selected
+                                ? AppColors.textPrimary
+                                : AppColors.uiText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SidebarItem extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -492,14 +613,22 @@ class _ContentHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.close_rounded, size: 18),
-            color: AppColors.uiHint,
-            onPressed: onClose,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            splashRadius: 16,
-          ),
+          if (MediaQuery.sizeOf(context).width < 700)
+            IconButton(
+              tooltip: 'Close',
+              icon: const Icon(Icons.close_rounded, size: 22),
+              color: AppColors.uiText,
+              onPressed: onClose,
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 18),
+              color: AppColors.uiHint,
+              onPressed: onClose,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              splashRadius: 16,
+            ),
         ],
       ),
     );

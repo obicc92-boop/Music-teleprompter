@@ -4,6 +4,7 @@ import 'package:music_teleprompter/models/song_settings.dart';
 import 'package:music_teleprompter/models/song_theme.dart';
 import 'package:music_teleprompter/services/settings_service.dart';
 import 'package:music_teleprompter/services/song_settings_store.dart';
+import 'package:music_teleprompter/widgets/colour_sliders.dart';
 import 'package:music_teleprompter/widgets/theme_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

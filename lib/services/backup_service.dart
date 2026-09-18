@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/app_platform.dart';
+import 'file_service.dart';
 
 // Friendly label shown in the snackbar after an auto-backup
 String backupLocationLabel(String path) {
@@ -65,8 +67,10 @@ class BackupService {
     final dateStr = DateTime.now().toIso8601String().substring(0, 10);
     final fileName = 'MusicTeleprompterBackup_$dateStr.json';
 
-    // Try auto-backup location (iCloud on macOS, Documents elsewhere)
-    final autoPath = await _autoBackupPath(fileName);
+    // Try auto-backup location (iCloud on macOS, Documents elsewhere); a
+    // phone or tablet always asks, so the backup can go to Drive or Downloads
+    final autoPath =
+        AppPlatform.isMobile ? null : await _autoBackupPath(fileName);
     if (autoPath != null) {
       try {
         final dir = File(autoPath).parent;
@@ -77,15 +81,12 @@ class BackupService {
     }
 
     // Fall back to user-selected location
-    final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save Backup',
+    return FileService.saveTextFile(
+      content: bundle,
       fileName: fileName,
-      type: FileType.custom,
-      allowedExtensions: ['json'],
+      dialogTitle: 'Save Backup',
+      extensions: ['json'],
     );
-    if (savePath == null) return null;
-    await File(savePath).writeAsString(bundle);
-    return savePath;
   }
 
   /// Asks for a backup file and reads it, without restoring anything yet.

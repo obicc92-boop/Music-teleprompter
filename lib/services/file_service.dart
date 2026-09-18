@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
+import '../utils/app_platform.dart';
 
 class FileService {
   static const List<String> _allowedExtensions = ['txt', 'lrc', 'md'];
@@ -26,17 +27,39 @@ class FileService {
   }
 
   Future<bool> saveFile(String content, String suggestedName) async {
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save Script',
+    final path = await saveTextFile(
+      content: content,
       fileName: '$suggestedName.txt',
-      type: FileType.custom,
-      allowedExtensions: ['txt', 'lrc'],
+      dialogTitle: 'Save Script',
+      extensions: ['txt', 'lrc'],
     );
+    return path != null;
+  }
 
-    if (path == null) return false;
-
+  /// Asks where to save [content] and saves it; null if cancelled. Desktop
+  /// picks a path and the app writes it; Android and iOS save it themselves.
+  static Future<String?> saveTextFile({
+    required String content,
+    required String fileName,
+    required String dialogTitle,
+    required List<String> extensions,
+  }) async {
+    if (AppPlatform.isMobile) {
+      return FilePicker.platform.saveFile(
+        dialogTitle: dialogTitle,
+        fileName: fileName,
+        bytes: Uint8List.fromList(utf8.encode(content)),
+      );
+    }
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: dialogTitle,
+      fileName: fileName,
+      type: FileType.custom,
+      allowedExtensions: extensions,
+    );
+    if (path == null) return null;
     await File(path).writeAsString(content);
-    return true;
+    return path;
   }
 
   Future<String?> loadBundledScript(String assetName) async {

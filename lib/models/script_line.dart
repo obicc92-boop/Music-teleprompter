@@ -19,6 +19,11 @@ class ScriptLine {
   /// Per-word start times in seconds from start of audio, used for karaoke highlight.
   final List<double>? wordTimestamps;
 
+  /// Where [text] starts in the song's raw text, so formatting saved by
+  /// character offset can be found; null when the text was rewritten while
+  /// parsing (chord lines).
+  final int? rawStart;
+
   const ScriptLine({
     required this.text,
     required this.words,
@@ -31,6 +36,7 @@ class ScriptLine {
     this.isLoopEnd = false,
     this.chordSegments,
     this.wordTimestamps,
+    this.rawStart,
   });
 
   ScriptLine copyWith({
@@ -45,6 +51,7 @@ class ScriptLine {
     bool? isLoopEnd,
     List<ChordSegment>? chordSegments,
     List<double>? wordTimestamps,
+    int? rawStart,
   }) {
     return ScriptLine(
       text: text ?? this.text,
@@ -58,6 +65,7 @@ class ScriptLine {
       isLoopEnd: isLoopEnd ?? this.isLoopEnd,
       chordSegments: chordSegments ?? this.chordSegments,
       wordTimestamps: wordTimestamps ?? this.wordTimestamps,
+      rawStart: rawStart ?? this.rawStart,
     );
   }
 

@@ -11,6 +11,7 @@ import '../services/setlist_export_service.dart';
 import '../services/setlist_service.dart';
 import '../services/song_lrc_content_store.dart';
 import '../services/song_settings_store.dart';
+import '../utils/app_platform.dart';
 import '../utils/constants.dart';
 import '../widgets/lrc_search_dialog.dart';
 
@@ -304,9 +305,11 @@ class _HomeViewState extends State<HomeView> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          path != null
-              ? 'Opened in browser — use File › Print › Save as PDF'
-              : 'Export failed',
+          path == null
+              ? 'Export failed'
+              : AppPlatform.isMobile
+              ? 'Saved — open it in a browser to print or share it'
+              : 'Opened in browser — use File › Print › Save as PDF',
           style: const TextStyle(fontFamily: AppTextStyles.ui, fontSize: 13),
         ),
         duration: const Duration(seconds: 5),
@@ -321,7 +324,7 @@ class _HomeViewState extends State<HomeView> {
       if (!mounted) return;
       final msg = path != null
           ? 'Backed up everything to ${backupLocationLabel(path)}. '
-                'To move your show, restore that file on the other computer.'
+                'To move your show, restore that file on the other device.'
           : 'Backup cancelled';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -667,6 +670,7 @@ class _HomeViewState extends State<HomeView> {
       backgroundColor: AppColors.background,
       body: LayoutBuilder(
         builder: (context, constraints) {
+          if (constraints.maxWidth < 600) return _buildPhone();
           final compact = constraints.maxWidth < 1000;
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -678,6 +682,182 @@ class _HomeViewState extends State<HomeView> {
         },
       ),
     );
+  }
+
+  // ── Phone: setlist picker on top, full-width list ────────────────────────
+
+  Widget _buildPhone() {
+    final active = _active;
+    final songs = active?.items.where((i) => i.isSong).toList() ?? const [];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: _showSetlistPicker,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Text('SETLIST', style: AppTextStyles.eyebrow),
+                            SizedBox(width: 4),
+                            Icon(Icons.expand_more_rounded,
+                                size: 16, color: AppColors.uiHint),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          (active?.name ?? '').toUpperCase(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: AppTextStyles.display,
+                            fontSize: 30,
+                            fontWeight: FontWeight.w700,
+                            height: 1.05,
+                            letterSpacing: 0.5,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Settings',
+                onPressed: widget.onOpenSettings,
+                icon: const Icon(Icons.tune_rounded, color: AppColors.uiText),
+              ),
+              _setlistMenu(),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 2, 20, 16),
+          child: Text(
+            _setlistMeta(songs),
+            style: const TextStyle(fontSize: 14, color: AppColors.uiText),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              Expanded(child: _addMenu(compact: false, stretch: true)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed:
+                      songs.isEmpty ? null : () => _launchItem(songs.first),
+                  icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                  label: const Text('Start show'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: _buildList(compact: true, phone: true),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Every setlist in a sheet from the bottom, plus a new one
+  Future<void> _showSetlistPicker() async {
+    if (_editingId != null) _commitEdit();
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: Text('SETLISTS', style: AppTextStyles.eyebrow),
+              ),
+              for (var i = 0; i < _setlists.length; i++)
+                ListTile(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  selected: i == _activeTab,
+                  selectedTileColor: AppColors.surfaceSelected,
+                  title: Text(
+                    _setlists[i].name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight:
+                          i == _activeTab ? FontWeight.w600 : FontWeight.w500,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  trailing: Text(
+                    '${_setlists[i].items.where((s) => s.isSong).length}',
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.mono,
+                      fontSize: 13,
+                      color: i == _activeTab
+                          ? AppColors.accentText
+                          : AppColors.uiMuted,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, i),
+                ),
+              ListTile(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                leading: const Icon(Icons.add_rounded, color: AppColors.uiHint),
+                title: const Text(
+                  'New setlist',
+                  style: TextStyle(fontSize: 16, color: AppColors.uiText),
+                ),
+                onTap: () => Navigator.pop(sheetContext, -1),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    if (picked == -1) {
+      _addSetlist();
+    } else {
+      setState(() {
+        _activeTab = picked;
+        _selectedId = null;
+      });
+    }
+  }
+
+  String _setlistMeta(List<SetlistItem> songs) {
+    final timed = songs.where((s) => _timedSongs.contains(s.title)).length;
+    return [
+      '${songs.length} song${songs.length == 1 ? '' : 's'}',
+      if (timed == 1) '1 follows its timing',
+      if (timed > 1) '$timed follow their timing',
+    ].join('  ·  ');
   }
 
   // ── Sidebar: every setlist, then app-wide places ─────────────────────────
@@ -832,7 +1012,7 @@ class _HomeViewState extends State<HomeView> {
             SizedBox(height: compact ? 20 : 28),
             if (hasItems && !compact) _columnLabels(),
             Expanded(child: _buildList(compact: compact)),
-            if (hasItems && !compact) _keyHints(),
+            if (hasItems && !compact && !AppPlatform.isTouch) _keyHints(),
           ],
         ),
       ),
@@ -841,12 +1021,7 @@ class _HomeViewState extends State<HomeView> {
 
   Widget _buildHeader(Setlist? active, {required bool compact}) {
     final songs = active?.items.where((i) => i.isSong).toList() ?? const [];
-    final timed = songs.where((s) => _timedSongs.contains(s.title)).length;
-    final meta = [
-      '${songs.length} song${songs.length == 1 ? '' : 's'}',
-      if (timed == 1) '1 follows its timing',
-      if (timed > 1) '$timed follow their timing',
-    ].join('  ·  ');
+    final meta = _setlistMeta(songs);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -897,9 +1072,11 @@ class _HomeViewState extends State<HomeView> {
     IconData? icon,
     String? label,
     bool chevron = false,
+    bool stretch = false,
   }) {
     return Container(
       height: 44,
+      alignment: stretch ? Alignment.center : null,
       padding: EdgeInsets.symmetric(horizontal: label == null ? 13 : 16),
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -908,6 +1085,7 @@ class _HomeViewState extends State<HomeView> {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (icon != null)
             Icon(
@@ -955,7 +1133,9 @@ class _HomeViewState extends State<HomeView> {
     return PopupMenuItem<VoidCallback>(
       value: action,
       enabled: enabled,
-      height: subtitle == null ? 40 : 52,
+      height: AppPlatform.isTouch
+          ? (subtitle == null ? 48 : 58)
+          : (subtitle == null ? 40 : 52),
       child: Row(
         children: [
           Icon(
@@ -993,7 +1173,7 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  Widget _addMenu({required bool compact}) {
+  Widget _addMenu({required bool compact, bool stretch = false}) {
     return PopupMenuButton<VoidCallback>(
       tooltip: 'Add songs and breaks',
       position: PopupMenuPosition.under,
@@ -1036,6 +1216,7 @@ class _HomeViewState extends State<HomeView> {
         icon: Icons.add_rounded,
         label: 'Add',
         chevron: !compact,
+        stretch: stretch,
       ),
     );
   }
@@ -1138,7 +1319,7 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  Widget _buildList({required bool compact}) {
+  Widget _buildList({required bool compact, bool phone = false}) {
     if (_loading) {
       return const Center(
         child: SizedBox(
@@ -1218,6 +1399,7 @@ class _HomeViewState extends State<HomeView> {
           canGroup: i > 0,
           isSelected: _selectedId == item.id,
           compact: compact,
+          phone: phone,
           isEditingNote: _editingId == item.id,
           editCtrl: _editCtrl,
           editFocus: _editFocus,
@@ -1416,6 +1598,7 @@ class _SongRow extends StatefulWidget {
   final bool canGroup;
   final bool isSelected;
   final bool compact;
+  final bool phone; // no playback column; speed and timing join the detail
   final bool isEditingNote;
   final TextEditingController editCtrl;
   final FocusNode editFocus;
@@ -1441,6 +1624,7 @@ class _SongRow extends StatefulWidget {
     required this.canGroup,
     required this.isSelected,
     required this.compact,
+    this.phone = false,
     required this.isEditingNote,
     required this.editCtrl,
     required this.editFocus,
@@ -1466,6 +1650,8 @@ class _SongRowState extends State<_SongRow> {
   Widget build(BuildContext context) {
     final item = widget.item;
     final lit = _hovered || widget.isSelected;
+    final touch = AppPlatform.isTouch;
+    final phone = widget.phone;
     final dotColor = item.colorValue == 0xFF555555
         ? AppColors.uiMuted
         : Color(item.colorValue);
@@ -1497,9 +1683,10 @@ class _SongRowState extends State<_SongRow> {
                   child: SizedBox(
                     width: _SongRow.gripWidth,
                     height: 72,
+                    // No hover on a touch screen, so the handle stays visible
                     child: AnimatedOpacity(
                       duration: const Duration(milliseconds: 120),
-                      opacity: lit ? 1 : 0,
+                      opacity: lit ? 1 : (touch ? 0.6 : 0),
                       child: const Icon(
                         Icons.drag_indicator_rounded,
                         size: 20,
@@ -1510,7 +1697,7 @@ class _SongRowState extends State<_SongRow> {
                 ),
               ),
               SizedBox(
-                width: _SongRow.numberWidth,
+                width: phone ? 32 : _SongRow.numberWidth,
                 child: Text(
                   widget.number.toString().padLeft(2, '0'),
                   style: TextStyle(
@@ -1540,21 +1727,22 @@ class _SongRowState extends State<_SongRow> {
                   shape: BoxShape.circle,
                 ),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: phone ? 10 : 14),
               Expanded(child: _titleAndDetail()),
-              SizedBox(
-                width: widget.compact ? 44 : _SongRow.playbackWidth,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: _playback(),
+              if (!phone)
+                SizedBox(
+                  width: widget.compact ? 44 : _SongRow.playbackWidth,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _playback(),
+                  ),
                 ),
-              ),
               SizedBox(
                 width: widget.compact ? 92 : _SongRow.actionsWidth,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (!widget.compact)
+                    if (!widget.compact && !touch)
                       AnimatedOpacity(
                         duration: const Duration(milliseconds: 120),
                         opacity: _hovered ? 1 : 0,
@@ -1567,7 +1755,7 @@ class _SongRowState extends State<_SongRow> {
                       ),
                     AnimatedOpacity(
                       duration: const Duration(milliseconds: 120),
-                      opacity: lit ? 1 : 0.45,
+                      opacity: lit || touch ? 1 : 0.45,
                       child: _rowMenu(),
                     ),
                     const SizedBox(width: 4),
@@ -1575,12 +1763,25 @@ class _SongRowState extends State<_SongRow> {
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: phone ? 4 : 12),
             ],
           ),
         ),
       ),
     );
+  }
+
+  // On a phone the speed or timing leads the detail line
+  String _detailText() {
+    final detail = widget.detail ?? '';
+    if (!widget.phone) return detail;
+    final lead = widget.isTimed
+        ? 'Timed'
+        : widget.speed != null
+        ? ScrollConstants.speedLabel(widget.speed!)
+        : null;
+    if (lead == null) return detail;
+    return detail.isEmpty ? lead : '$lead  ·  $detail';
   }
 
   Widget _titleAndDetail() {
@@ -1594,7 +1795,9 @@ class _SongRowState extends State<_SongRow> {
           behavior: HitTestBehavior.opaque,
           onDoubleTap: widget.onLaunch,
           child: Tooltip(
-            message: '${item.title}\nDouble-click to launch',
+            message: AppPlatform.isTouch
+                ? item.title
+                : '${item.title}\nDouble-click to launch',
             waitDuration: const Duration(milliseconds: 700),
             child: SizedBox(
               width: double.infinity,
@@ -1629,7 +1832,7 @@ class _SongRowState extends State<_SongRow> {
                   onSubmitted: (_) => widget.onCommitNote(),
                 )
               : Text(
-                  widget.detail ?? '',
+                  _detailText(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1733,7 +1936,7 @@ class _SongRowState extends State<_SongRow> {
       return PopupMenuItem<VoidCallback>(
         value: action,
         enabled: enabled,
-        height: 40,
+        height: AppPlatform.isTouch ? 48 : 40,
         child: Row(
           children: [
             Icon(
@@ -1886,7 +2089,7 @@ class _BreakRowState extends State<_BreakRow> {
                   height: 52,
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 120),
-                    opacity: _hovered ? 1 : 0,
+                    opacity: _hovered ? 1 : (AppPlatform.isTouch ? 0.6 : 0),
                     child: const Icon(
                       Icons.drag_indicator_rounded,
                       size: 20,
@@ -1900,7 +2103,7 @@ class _BreakRowState extends State<_BreakRow> {
             const SizedBox(width: 16),
             widget.isEditing
                 ? SizedBox(
-                    width: 280,
+                    width: MediaQuery.sizeOf(context).width < 600 ? 160 : 280,
                     child: TextField(
                       controller: widget.editCtrl,
                       focusNode: widget.editFocus,
@@ -1933,7 +2136,7 @@ class _BreakRowState extends State<_BreakRow> {
               width: 48,
               child: AnimatedOpacity(
                 duration: const Duration(milliseconds: 120),
-                opacity: _hovered ? 1 : 0,
+                opacity: _hovered || AppPlatform.isTouch ? 1 : 0,
                 child: IconButton(
                   tooltip: 'Remove break',
                   onPressed: widget.onRemove,

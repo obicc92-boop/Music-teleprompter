@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import '../engine/sync_engine.dart';
@@ -10,6 +11,9 @@ import '../models/script.dart';
 import '../models/script_formatting.dart';
 import '../services/audio_service.dart';
 import '../services/chord_transposer.dart';
+import '../services/file_service.dart';
+import '../services/line_edit.dart';
+import '../services/script_parser.dart';
 import '../services/remote_control_server.dart';
 import '../models/song_theme.dart';
 import '../services/song_audio_store.dart';
@@ -17,10 +21,12 @@ import '../services/song_lrc_store.dart';
 import '../services/song_lrc_content_store.dart';
 import '../services/song_transpose_store.dart';
 import '../services/lrc_service.dart';
+import '../utils/app_platform.dart';
+import '../utils/back_dispatcher.dart';
 import '../utils/constants.dart';
 import '../utils/keyboard_handler.dart';
 import '../widgets/controls_overlay.dart';
-import '../widgets/format_overlay.dart';
+import '../widgets/inline_line_editor.dart';
 import '../widgets/mirror_transform.dart';
 import '../widgets/script_line_widget.dart';
 import '../widgets/timing_recorder.dart';
@@ -28,8 +34,9 @@ import '../services/settings_service.dart';
 import '../services/formatting_service.dart';
 
 // Nobody touches the computer while singing, so without this the display
-// dims or sleeps mid-song. Counted, because moving to the next song builds
-// its view before the previous one is disposed.
+// dims or sleeps mid-song. On phones and tablets the lyrics also take the
+// whole screen, hiding the status and navigation bars. Counted, because
+// moving to the next song builds its view before the previous one is disposed.
 class _ScreenAwake {
   static int _holders = 0;
 
@@ -43,6 +50,13 @@ class _ScreenAwake {
 
   static void _set(bool awake) {
     unawaited(WakelockPlus.toggle(enable: awake).catchError((Object _) {}));
+    if (AppPlatform.isMobile) {
+      unawaited(
+        SystemChrome.setEnabledSystemUIMode(
+          awake ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+        ),
+      );
+    }
   }
 }
 
@@ -68,6 +82,16 @@ class TeleprompterView extends StatefulWidget {
   final ValueChanged<SongTheme>? onThemeChanged;
   final VoidCallback? onThemeReset;
 
+  /// Where Android's back gesture is sent while this song is on screen.
+  final BackDispatcher? backDispatcher;
+
+  /// Opens this song in the editor (lyrics and their formatting).
+  final VoidCallback? onEdit;
+
+  /// The lyrics were changed on this screen and saved; the owner keeps its
+  /// copy of the song in step.
+  final ValueChanged<Script>? onScriptChanged;
+
   const TeleprompterView({
     super.key,
     required this.script,
@@ -84,6 +108,9 @@ class TeleprompterView extends StatefulWidget {
     this.songHasOwnTheme = false,
     this.onThemeChanged,
     this.onThemeReset,
+    this.backDispatcher,
+    this.onEdit,
+    this.onScriptChanged,
   });
 
   @override
@@ -100,7 +127,6 @@ class _TeleprompterViewState extends State<TeleprompterView>
   late Script _script;
   ScriptFormatting _formatting = ScriptFormatting.empty;
   bool _isFullscreen = false;
-  bool _showFormatOverlay = false;
   bool _isMirrored = false;
   bool _cueMode = false;
   // Song timing: where the lines' times come from (null = scrolls at speed)
@@ -112,12 +138,15 @@ class _TeleprompterViewState extends State<TeleprompterView>
   DateTime? _escapePressedAt;
   bool _initialized = false;
   final _keyboardFocus = FocusNode(debugLabel: 'TeleprompterKeys');
+  final _recorderKey = GlobalKey<TimingRecorderState>();
   int _transposeSteps = 0;
   int? _countdownValue;
   bool _isOnSecondDisplay = false;
   final List<DateTime> _tapTimes = [];
 
   final _formattingService = FormattingService();
+  int? _editingLine; // a line being edited where it stands
+  bool _timingFromContent = false; // timing the app itself keeps for the song
 
   @override
   void initState() {
@@ -148,12 +177,18 @@ class _TeleprompterViewState extends State<TeleprompterView>
     _loadSavedAudio();
     _loadSavedTranspose();
     _loadSavedTiming();
+    widget.backDispatcher?.register(_handleEscape);
     _initialized = true;
   }
 
   Future<void> _loadFormatting() async {
     final fmt = await _formattingService.load(_script.title);
-    if (mounted) setState(() => _formatting = fmt);
+    if (!mounted) return;
+    // Formats saved by an earlier version are moved onto the lyrics and
+    // written back, so they never need converting again
+    final upgraded = fmt.upgraded(_script);
+    if (fmt.legacy.isNotEmpty) _formattingService.save(_script.title, upgraded);
+    setState(() => _formatting = upgraded);
   }
 
   Future<void> _loadSavedAudio() async {
@@ -238,6 +273,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
     final line = _scrollEngine.activeLineIndex;
     final midSong = line > 0 && line < _script.totalLines - 1;
     widget.onLeave?.call(_script.title, midSong ? line : null);
+    widget.backDispatcher?.unregister(_handleEscape);
     _noticeTimer?.cancel();
     _keyboardFocus.dispose();
     _ScreenAwake.release();
@@ -265,10 +301,18 @@ class _TeleprompterViewState extends State<TeleprompterView>
       _syncEndReachedCallback();
     }
     if (widget.script != oldWidget.script) {
-      // Song changed — reload audio for the new song
-      _audioService.unload();
-      setState(() => _script = widget.script);
-      _loadSavedAudio();
+      if (widget.script.title != oldWidget.script.title) {
+        // Another song — reload audio and formatting for it
+        _audioService.unload();
+        setState(() {
+          _script = widget.script;
+          _formatting = ScriptFormatting.empty;
+        });
+        _loadSavedAudio();
+        _loadFormatting();
+      } else if (widget.script.rawText != _script.rawText) {
+        setState(() => _script = widget.script);
+      }
     }
   }
 
@@ -286,13 +330,6 @@ class _TeleprompterViewState extends State<TeleprompterView>
     }
   }
 
-  // ── Formatting / lyrics callbacks ──────────────────────────────────────────
-
-  void _onFormattingChanged(ScriptFormatting fmt) {
-    setState(() => _formatting = fmt);
-    _formattingService.save(_script.title, fmt);
-  }
-
   void _syncEndReachedCallback() {
     _scrollEngine.onEndReached =
         (_settings.autoAdvance && widget.onNextScript != null)
@@ -305,12 +342,14 @@ class _TeleprompterViewState extends State<TeleprompterView>
   // ── Fullscreen / back ──────────────────────────────────────────────────────
 
   Future<void> _toggleFullscreen() async {
+    if (!AppPlatform.isDesktop) return; // always full screen there
     final next = !_isFullscreen;
     setState(() => _isFullscreen = next);
     await windowManager.setFullScreen(next);
   }
 
-  bool get _hasSecondDisplay => PlatformDispatcher.instance.displays.length > 1;
+  bool get _hasSecondDisplay =>
+      AppPlatform.isDesktop && PlatformDispatcher.instance.displays.length > 1;
 
   Future<void> _moveToSecondDisplay() async {
     if (_isOnSecondDisplay) {
@@ -337,6 +376,144 @@ class _TeleprompterViewState extends State<TeleprompterView>
         _isFullscreen = true;
       });
     }
+  }
+
+  // ── Editing a line where it stands ────────────────────────────────────────
+
+  void _beginEditLine(int index) {
+    if (_recordingTiming || _editingLine != null) return;
+    if (_script.allLines[index].rawStart == null) {
+      _showNotice(
+        'This line can\'t be edited here — use Edit (E) instead',
+        const Duration(seconds: 4),
+      );
+      return;
+    }
+    _countdownTimer?.cancel();
+    _countdownValue = null;
+    if (widget.syncEngine.isPlaying) widget.syncEngine.pause();
+    _scrollEngine.jumpToLine(index);
+    setState(() => _editingLine = index);
+    _showNotice(
+      AppPlatform.isTouch
+          ? 'Editing this line — tap Save when you\'re done'
+          : 'Enter saves · Esc cancels · Shift+Enter for a new line · '
+              'Delete on an empty line removes it',
+      const Duration(seconds: 5),
+    );
+  }
+
+  void _cancelEditLine() {
+    setState(() => _editingLine = null);
+    _keyboardFocus.requestFocus();
+  }
+
+  Future<void> _saveEditedLine(
+    String newText,
+    ScriptFormatting lineFormatting,
+  ) async {
+    final index = _editingLine;
+    if (index == null) return;
+    final line = _script.allLines[index];
+    final start = line.rawStart!;
+    await _replaceEditedLine(
+        start, start + line.text.length, newText, lineFormatting);
+  }
+
+  /// Takes the line out, with the line break that separated it from its
+  /// neighbour, so nothing is left behind but the lines around it.
+  Future<void> _deleteEditedLine() async {
+    final index = _editingLine;
+    if (index == null) return;
+    final line = _script.allLines[index];
+    final start = line.rawStart!;
+    final end = start + line.text.length;
+    final raw = _script.rawText;
+    if (start > 0) {
+      await _replaceEditedLine(start - 1, end, '', ScriptFormatting.empty);
+    } else if (end < raw.length) {
+      await _replaceEditedLine(start, end + 1, '', ScriptFormatting.empty);
+    } else {
+      _cancelEditLine();
+    }
+  }
+
+  Future<void> _replaceEditedLine(
+    int start,
+    int end,
+    String newText,
+    ScriptFormatting lineFormatting,
+  ) async {
+    final index = _editingLine;
+    if (index == null) return;
+    final line = _script.allLines[index];
+    final oldRaw = _script.rawText;
+    final newRaw = oldRaw.replaceRange(start, end, newText);
+
+    if (newRaw == oldRaw &&
+        lineFormatting.spans.isEmpty &&
+        _formatting.forLine(line).isEmpty) {
+      _cancelEditLine();
+      return;
+    }
+
+    final formatting = LineEdit.replaceRange(
+      _formatting,
+      oldRaw,
+      start,
+      end,
+      newText,
+      lineFormatting,
+    );
+
+    final oldScript = _script;
+    final oldTimeline = _scrollEngine.timeline;
+    final newScript = ScriptParser.parse(newRaw, title: _script.title);
+    setState(() {
+      _script = newScript;
+      _formatting = formatting;
+      _editingLine = null;
+    });
+    _scrollEngine.setScript(newScript, _effectiveLineHeight);
+    _scrollEngine.jumpToLine(index.clamp(0, newScript.totalLines - 1));
+    _keyboardFocus.requestFocus();
+
+    await FileService().saveToLibrary(newRaw, newScript.title);
+    await _formattingService.save(newScript.title, formatting);
+    await _keepTimingAfterEdit(oldScript, newScript, index, oldTimeline);
+    widget.onScriptChanged?.call(newScript);
+  }
+
+  /// Timing is matched to lyric lines in order, so a line added or removed
+  /// would shift every time after it. The app's own saved timing is rewritten
+  /// to follow the edit; timing from an outside file is matched again.
+  Future<void> _keepTimingAfterEdit(
+    Script oldScript,
+    Script newScript,
+    int editedLine,
+    List<(int, double)> oldTimeline,
+  ) async {
+    if (oldTimeline.isEmpty) return;
+    if (!_timingFromContent) {
+      _loadSavedTiming();
+      return;
+    }
+    final times = LineEdit.retime(
+      newScript,
+      editedLine,
+      newScript.totalLines - oldScript.totalLines,
+      oldTimeline,
+    );
+    final lines = times.keys.toList()..sort();
+    final content = LrcService.toLrc([
+      for (final i in lines)
+        (
+          newScript.allLines[i].text,
+          Duration(microseconds: (times[i]! * 1e6).round()),
+        ),
+    ], rehearsal: _timingLabel == 'Rehearsal timing');
+    await SongLrcContentStore.saveContent(newScript.title, content);
+    if (mounted) _applyTimingContent(content);
   }
 
   // ── Keeping your place ─────────────────────────────────────────────────────
@@ -377,13 +554,17 @@ class _TeleprompterViewState extends State<TeleprompterView>
     }
     _escapePressedAt = DateTime.now();
     _showNotice(
-      'Press Esc again to leave this song',
+      AppPlatform.isTouch
+          ? 'Go back again to leave this song'
+          : 'Press Esc again to leave this song',
       const Duration(seconds: 3),
     );
   }
 
   void _handleBack() {
-    if (_isFullscreen) windowManager.setFullScreen(false);
+    if (_isFullscreen && AppPlatform.isDesktop) {
+      windowManager.setFullScreen(false);
+    }
     widget.syncEngine.stop();
     widget.onBack();
   }
@@ -486,6 +667,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
   }
 
   void _applyTimingContent(String content) {
+    _timingFromContent = true;
     _setTimeline(
       LrcService.matchToScript(LrcService.parse(content), _script),
       label: LrcService.isRehearsalTiming(content)
@@ -636,11 +818,13 @@ class _TeleprompterViewState extends State<TeleprompterView>
       onPrevScript: widget.onPrevScript,
       onToggleMirror: () => setState(() => _isMirrored = !_isMirrored),
       onTapTempo: _onTapTempo,
+      onEdit: widget.onEdit,
       onPlayPauseOverride: _onPlayPauseRequested,
       onJumpNextSection: _jumpNextSection,
       onJumpPrevSection: _jumpPrevSection,
       pedalAction: _settings.pedalAction,
       focusNode: _keyboardFocus,
+      enabled: _editingLine == null,
       child: Scaffold(
         backgroundColor: _songTheme.background,
         body: Listener(
@@ -656,7 +840,19 @@ class _TeleprompterViewState extends State<TeleprompterView>
           },
           child: Stack(
             children: [
-              MirrorTransform(enabled: _isMirrored, child: _buildCanvas()),
+              // A finger drags the lyrics; mice and trackpads scroll above
+              GestureDetector(
+                supportedDevices: const {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.stylus,
+                },
+                onVerticalDragUpdate: (d) =>
+                    _scrollEngine.scrollByPixels(-d.delta.dy),
+                child: MirrorTransform(
+                  enabled: _isMirrored,
+                  child: _buildCanvas(),
+                ),
+              ),
               // Lyrics fade out before they reach the controls bar
               Positioned(
                 left: 0,
@@ -706,10 +902,11 @@ class _TeleprompterViewState extends State<TeleprompterView>
                       syncEngine: widget.syncEngine,
                       scrollEngine: _scrollEngine,
                       onPlayPause: _onPlayPauseRequested,
-                      onFullscreen: _toggleFullscreen,
+                      onFullscreen: AppPlatform.isDesktop
+                          ? _toggleFullscreen
+                          : null,
                       onSettings: widget.onSettings,
-                      onFormatLyrics: () =>
-                          setState(() => _showFormatOverlay = true),
+                      onEdit: widget.onEdit,
                       onBack: _handleBack,
                       onNextScript: widget.onNextScript,
                       onPrevScript: widget.onPrevScript,
@@ -747,30 +944,27 @@ class _TeleprompterViewState extends State<TeleprompterView>
                     ),
                   ),
                 ),
+              // While recording on a phone, the whole screen is the tap
+              // target: one tap per line, no keyboard needed
+              if (_recordingTiming && AppPlatform.isTouch)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _recorderKey.currentState?.tap(),
+                  ),
+                ),
               if (_recordingTiming)
                 Positioned(
                   left: 0,
                   right: 0,
                   top: 0,
                   child: TimingRecorder(
+                    key: _recorderKey,
                     script: _script,
                     scrollEngine: _scrollEngine,
                     replacesTiming: _timingLabel != null,
                     onSave: _saveRecordedTiming,
                     onCancel: _cancelRecordingTiming,
-                  ),
-                ),
-              if (_showFormatOverlay)
-                Positioned(
-                  right: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 400,
-                  child: FormatOverlay(
-                    script: _script,
-                    formatting: _formatting,
-                    onChanged: _onFormattingChanged,
-                    onClose: () => setState(() => _showFormatOverlay = false),
                   ),
                 ),
             ],
@@ -796,68 +990,103 @@ class _TeleprompterViewState extends State<TeleprompterView>
               ? _scrollEngine.clockSeconds
               : null;
 
+          Widget? editor;
+          final lineWidgets = List.generate(lines.length, (i) {
+            final y =
+                anchorY +
+                (i - activeIdx) * lineHeight -
+                (pixelOffset - activeIdx * lineHeight);
+
+            if (y < -lineHeight * 2 || y > screenHeight + lineHeight * 2) {
+              return const SizedBox.shrink();
+            }
+
+            final distance = (i - activeIdx).abs();
+            final proximity = distance == 0
+                ? LineProximity.active
+                : distance == 1
+                ? LineProximity.near
+                : distance <= 3
+                ? LineProximity.mid
+                : LineProximity.far;
+
+            final isLoopBoundary =
+                _scrollEngine.loopEnabled &&
+                (i == _scrollEngine.loopStartLine ||
+                    i == _scrollEngine.loopEndLine);
+
+            // Karaoke: compute active word index for the active line
+            int? activeWordIndex;
+            if (i == activeIdx &&
+                songSeconds != null &&
+                lines[i].wordTimestamps != null) {
+              final ts = lines[i].wordTimestamps!;
+              activeWordIndex = ts.lastIndexWhere((t) => songSeconds >= t);
+              if (activeWordIndex < 0) activeWordIndex = 0;
+            }
+
+            if (i == _editingLine) {
+              // Drawn last, over the lines below it
+              editor = Positioned(
+                key: ValueKey(i),
+                left: 48,
+                right: 48,
+                top: y,
+                child: InlineLineEditor(
+                  text: lines[i].text,
+                  spans: _formatting.forLine(lines[i]),
+                  style: AppTextStyles.activeLine(
+                    _settings.fontSize,
+                    displayFont: _settings.displayFont,
+                  ).copyWith(color: _songTheme.text),
+                  textAlign: _settings.textAlignLeft
+                      ? TextAlign.left
+                      : TextAlign.center,
+                  accent: _songTheme.accent,
+                  textColor: _songTheme.text,
+                  onSave: _saveEditedLine,
+                  onCancel: _cancelEditLine,
+                  onDelete: _deleteEditedLine,
+                ),
+              );
+              return const SizedBox.shrink();
+            }
+
+            return Positioned(
+              key: ValueKey(i),
+              left: 48,
+              right: 48,
+              top: y,
+              height: lineHeight,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.center,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onDoubleTap: () => _beginEditLine(i),
+                  onLongPress: AppPlatform.isTouch
+                      ? () => _beginEditLine(i)
+                      : null,
+                  child: ScriptLineWidget(
+                    line: lines[i],
+                    proximity: proximity,
+                    fontSize: _settings.fontSize,
+                    isLoopBoundary: isLoopBoundary,
+                    displayFont: _settings.displayFont,
+                    spans: _formatting.forLine(lines[i]),
+                    activeWordIndex: activeWordIndex,
+                    textAlignLeft: _settings.textAlignLeft,
+                    showHighlight: _settings.showActiveLineHighlight,
+                    theme: _songTheme,
+                  ),
+                ),
+              ),
+            );
+          });
           return ClipRect(
             child: Stack(
               fit: StackFit.expand,
-              children: List.generate(lines.length, (i) {
-                final y =
-                    anchorY +
-                    (i - activeIdx) * lineHeight -
-                    (pixelOffset - activeIdx * lineHeight);
-
-                if (y < -lineHeight * 2 || y > screenHeight + lineHeight * 2) {
-                  return const SizedBox.shrink();
-                }
-
-                final distance = (i - activeIdx).abs();
-                final proximity = distance == 0
-                    ? LineProximity.active
-                    : distance == 1
-                    ? LineProximity.near
-                    : distance <= 3
-                    ? LineProximity.mid
-                    : LineProximity.far;
-
-                final isLoopBoundary =
-                    _scrollEngine.loopEnabled &&
-                    (i == _scrollEngine.loopStartLine ||
-                        i == _scrollEngine.loopEndLine);
-
-                // Karaoke: compute active word index for the active line
-                int? activeWordIndex;
-                if (i == activeIdx &&
-                    songSeconds != null &&
-                    lines[i].wordTimestamps != null) {
-                  final ts = lines[i].wordTimestamps!;
-                  activeWordIndex = ts.lastIndexWhere((t) => songSeconds >= t);
-                  if (activeWordIndex < 0) activeWordIndex = 0;
-                }
-
-                return Positioned(
-                  key: ValueKey(i),
-                  left: 48,
-                  right: 48,
-                  top: y,
-                  height: lineHeight,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.center,
-                    child: ScriptLineWidget(
-                      line: lines[i],
-                      lineIndex: i,
-                      proximity: proximity,
-                      fontSize: _settings.fontSize,
-                      isLoopBoundary: isLoopBoundary,
-                      displayFont: _settings.displayFont,
-                      formatting: _formatting,
-                      activeWordIndex: activeWordIndex,
-                      textAlignLeft: _settings.textAlignLeft,
-                      showHighlight: _settings.showActiveLineHighlight,
-                      theme: _songTheme,
-                    ),
-                  ),
-                );
-              }),
+              children: [...lineWidgets, ?editor],
             ),
           );
         },
@@ -908,9 +1137,7 @@ class _ProgressBar extends StatelessWidget {
                     children: [
                       Flexible(
                         flex: (progress * 1000).round().clamp(1, 1000),
-                        child: Container(
-                          color: accent.withValues(alpha: 0.7),
-                        ),
+                        child: Container(color: accent.withValues(alpha: 0.7)),
                       ),
                       Flexible(
                         flex: ((1 - progress) * 1000).round().clamp(1, 1000),
@@ -988,9 +1215,7 @@ class _AudioPositionBar extends StatelessWidget {
             children: [
               Flexible(
                 flex: (progress * 1000).round(),
-                child: Container(
-                  color: accent.withValues(alpha: 0.5),
-                ),
+                child: Container(color: accent.withValues(alpha: 0.5)),
               ),
               Flexible(
                 flex: ((1 - progress) * 1000).round().clamp(1, 1000),

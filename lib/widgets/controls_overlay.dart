@@ -6,17 +6,19 @@ import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
 import '../models/song_theme.dart';
 import 'theme_picker.dart';
+import '../utils/app_platform.dart';
 import '../services/chord_transposer.dart';
 import '../utils/constants.dart';
 
 enum _MoreAction {
+  loop,
   tapTempo,
   duration,
   transpose,
   cueMode,
   mirror,
   theme,
-  format,
+  edit,
   remote,
   display,
   removeAudio,
@@ -28,9 +30,11 @@ class ControlsOverlay extends StatefulWidget {
   final SyncEngine syncEngine;
   final ScrollEngine scrollEngine;
   final VoidCallback onPlayPause;
-  final VoidCallback onFullscreen;
+  /// Null where the app is always full screen (phones and tablets).
+  final VoidCallback? onFullscreen;
   final VoidCallback onSettings;
-  final VoidCallback onFormatLyrics;
+  /// Opens the song in the editor; null where editing isn't possible.
+  final VoidCallback? onEdit;
   final VoidCallback onBack;
   final VoidCallback? onNextScript;
   final VoidCallback? onPrevScript;
@@ -72,7 +76,7 @@ class ControlsOverlay extends StatefulWidget {
     required this.onPlayPause,
     required this.onFullscreen,
     required this.onSettings,
-    required this.onFormatLyrics,
+    this.onEdit,
     required this.onBack,
     this.onNextScript,
     this.onPrevScript,
@@ -160,9 +164,14 @@ class _ControlsOverlayState extends State<ControlsOverlay>
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
+      // Not opaque: the lyrics underneath must still get double-clicks and
+      // finger drags
+      opaque: false,
       onHover: (_) => _show(),
-      child: GestureDetector(
-        onTap: _show,
+      // A Listener, not a tap gesture: a gesture here would win every click
+      // over the lyrics beneath (a line being edited, a word double-clicked)
+      child: Listener(
+        onPointerDown: (_) => _show(),
         behavior: HitTestBehavior.translucent,
         // Hidden controls ignore taps, so tapping the screen to bring them
         // back can't also press a button (e.g. NEXT) by accident.
@@ -297,6 +306,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
   Widget _buildBar() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        if (constraints.maxWidth < 600) return _buildPhoneBar();
         final compact = constraints.maxWidth < 960;
         final gap = compact ? 4.0 : 8.0;
         return ListenableBuilder(
@@ -342,19 +352,92 @@ class _ControlsOverlayState extends State<ControlsOverlay>
                     _volumeControl(sliderWidth: compact ? 56 : 72),
                     SizedBox(width: gap),
                   ],
+                  if (widget.onEdit != null) ...[
+                    _editButton(),
+                    SizedBox(width: gap),
+                  ],
                   _loopButton(),
                   SizedBox(width: gap),
                   _moreButton(),
                   SizedBox(width: gap),
                   _settingsButton(),
-                  SizedBox(width: gap),
-                  _fullscreenButton(),
+                  if (widget.onFullscreen != null) ...[
+                    SizedBox(width: gap),
+                    _fullscreenButton(),
+                  ],
                 ],
               ),
             );
           },
         );
       },
+    );
+  }
+
+  // A phone held upright: play and speed stay in the bar, loop moves to More
+  Widget _buildPhoneBar() {
+    return ListenableBuilder(
+      listenable: widget.syncEngine,
+      builder: (context, _) {
+        final state = widget.syncEngine.state;
+        return Container(
+          height: AppDimensions.controlsHeight + 16,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [AppColors.controlBackground, Colors.transparent],
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          child: Row(
+            children: [
+              _backButton(),
+              const SizedBox(width: 4),
+              _playPauseButton(state),
+              const SizedBox(width: 8),
+              widget.timingLabel != null
+                  ? _timingChip()
+                  : _phoneSpeedControl(state),
+              const Spacer(),
+              _moreButton(),
+              _settingsButton(),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _phoneSpeedControl(SyncEngineState state) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _iconButton(
+          icon: Icons.remove,
+          size: 20,
+          onTap: () => widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep),
+          tooltip: 'Slower',
+        ),
+        SizedBox(
+          width: 52,
+          child: Text(
+            ScrollConstants.speedLabel(state.manualMultiplier),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: AppTextStyles.mono,
+              fontSize: 13,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        ),
+        _iconButton(
+          icon: Icons.add,
+          size: 20,
+          onTap: () => widget.syncEngine.adjustSpeed(ScrollConstants.speedStep),
+          tooltip: 'Faster',
+        ),
+      ],
     );
   }
 
@@ -574,6 +657,13 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     );
   }
 
+  Widget _editButton() => _iconButton(
+        icon: Icons.edit_rounded,
+        size: 20,
+        onTap: widget.onEdit,
+        tooltip: 'Edit lyrics (E)',
+      );
+
   Widget _settingsButton() => _iconButton(
         icon: Icons.tune_rounded,
         onTap: widget.onSettings,
@@ -584,7 +674,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         icon: widget.isFullscreen
             ? Icons.fullscreen_exit_rounded
             : Icons.fullscreen_rounded,
-        onTap: widget.onFullscreen,
+        onTap: widget.onFullscreen ?? () {},
         tooltip: widget.isFullscreen
             ? 'Exit fullscreen (F)'
             : 'Fullscreen (F)',
@@ -598,9 +688,10 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       position: PopupMenuPosition.over,
       onSelected: _onMoreSelected,
       itemBuilder: (context) => _moreItems(),
-      child: const Padding(
-        padding: EdgeInsets.all(6),
-        child: Icon(Icons.more_horiz_rounded, size: 22, color: AppColors.uiText),
+      child: Padding(
+        padding: EdgeInsets.all(AppPlatform.isTouch ? 10 : 6),
+        child: const Icon(Icons.more_horiz_rounded,
+            size: 22, color: AppColors.uiText),
       ),
     );
   }
@@ -609,7 +700,13 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     final transposeLabel = ChordTransposer.offsetLabel(widget.transposeSteps);
     final theme = widget.songTheme ?? SongTheme.defaultTheme;
     final timed = widget.timingLabel != null;
+    final phoneBar = MediaQuery.sizeOf(context).width < 600;
     return [
+      if (phoneBar) ...[
+        _menuItem(_MoreAction.loop, Icons.repeat_rounded, 'Loop section',
+            checked: widget.scrollEngine.loopEnabled),
+        const PopupMenuDivider(height: 8),
+      ],
       _menuItem(_MoreAction.recordTiming, Icons.radio_button_checked_rounded,
           timed ? 'Record timing again…' : 'Record timing…'),
       // Speed tools don't apply to a song that follows its timing
@@ -654,8 +751,9 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         ),
         enabled: widget.onThemeChanged != null,
       ),
-      _menuItem(_MoreAction.format, Icons.format_paint_rounded,
-          'Format lyrics…'),
+      if (widget.onEdit != null)
+        _menuItem(_MoreAction.edit, Icons.edit_rounded, 'Edit lyrics…',
+            shortcut: 'E'),
       _menuItem(
         _MoreAction.remote,
         Icons.wifi_rounded,
@@ -687,10 +785,12 @@ class _ControlsOverlayState extends State<ControlsOverlay>
     bool checked = false,
     bool enabled = true,
   }) {
+    final touch = AppPlatform.isTouch;
+    if (touch) shortcut = null; // no keyboard to press them on
     return PopupMenuItem<_MoreAction>(
       value: action,
       enabled: enabled,
-      height: 40,
+      height: touch ? 48 : 40,
       child: Row(
         children: [
           Icon(icon,
@@ -706,7 +806,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
               label,
               style: TextStyle(
                 fontFamily: AppTextStyles.ui,
-                fontSize: 12,
+                fontSize: touch ? 14 : 12,
                 color: enabled ? AppColors.textPrimary : AppColors.uiHint,
               ),
             ),
@@ -737,6 +837,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
 
   void _onMoreSelected(_MoreAction action) {
     switch (action) {
+      case _MoreAction.loop:
+        widget.scrollEngine.setLoopEnabled(!widget.scrollEngine.loopEnabled);
       case _MoreAction.tapTempo:
         _showTapTempoDialog();
       case _MoreAction.duration:
@@ -749,8 +851,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         widget.onToggleMirror();
       case _MoreAction.theme:
         _showThemePicker();
-      case _MoreAction.format:
-        widget.onFormatLyrics();
+      case _MoreAction.edit:
+        widget.onEdit?.call();
       case _MoreAction.remote:
         if (widget.remoteUrl != null) _showRemoteDialog(widget.remoteUrl!);
       case _MoreAction.display:
@@ -1057,7 +1159,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.all(6),
+        // Fingers need a bigger target than a pointer
+        padding: EdgeInsets.all(AppPlatform.isTouch ? 10 : 6),
         child: Icon(icon, size: size, color: color),
       ),
     );
