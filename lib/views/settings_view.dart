@@ -291,6 +291,15 @@ class _SettingsViewState extends State<SettingsView> {
           value: _settings.autoAdvance,
           onChanged: (v) => _update(_settings.copyWith(autoAdvance: v)),
         ),
+        _Divider(),
+        _ToggleRow(
+          label: 'Countdown before starting',
+          sublabel: _forSong
+              ? 'Counts 3-2-1 when a song starts from the top · all songs'
+              : 'Counts 3-2-1 when a song starts from the top',
+          value: _settings.countdown,
+          onChanged: (v) => _update(_settings.copyWith(countdown: v)),
+        ),
       ],
     );
   }

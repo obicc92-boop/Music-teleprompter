@@ -48,7 +48,8 @@ void main() {
 
     test('changes to settings that are not per song are ignored', () {
       final before = SongSettings.none.applyTo(defaults);
-      final after = before.copyWith(autoAdvance: false, pedalAction: 'nextSong');
+      final after = before.copyWith(
+          autoAdvance: false, countdown: false, pedalAction: 'nextSong');
       expect(SongSettings.none.withChanges(before, after).isEmpty, true);
     });
 

@@ -120,12 +120,15 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     SettingsService().save(updated);
   }
 
-  // Auto-advance and the foot pedal stay the same for every song.
+  // Auto-advance, the countdown and the foot pedal stay the same for
+  // every song.
   void _onSongSettingsChanged(AppSettings updated) {
     if (updated.autoAdvance != _settings.autoAdvance ||
+        updated.countdown != _settings.countdown ||
         updated.pedalAction != _settings.pedalAction) {
       _onDefaultSettingsChanged(_settings.copyWith(
         autoAdvance: updated.autoAdvance,
+        countdown: updated.countdown,
         pedalAction: updated.pedalAction,
       ));
     }

@@ -242,7 +242,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
       return;
     }
     // Only show countdown when starting from scratch (stopped), not resuming
-    if (widget.syncEngine.playState == PlayState.stopped) {
+    if (widget.syncEngine.playState == PlayState.stopped &&
+        _settings.countdown) {
       _startCountdown();
     } else {
       widget.syncEngine.togglePlayPause();

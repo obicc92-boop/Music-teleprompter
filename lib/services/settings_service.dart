@@ -6,6 +6,9 @@ class AppSettings {
   final double fontSize;
   final double scrollSpeedMultiplier;
   final bool autoAdvance;
+
+  /// A 3-2-1 count before a song starts from the top.
+  final bool countdown;
   final String pedalAction;
   final String displayFont;
   final bool textAlignLeft;
@@ -19,6 +22,7 @@ class AppSettings {
     this.fontSize = AppDimensions.defaultFontSize,
     this.scrollSpeedMultiplier = ScrollConstants.defaultSpeedMultiplier,
     this.autoAdvance = true,
+    this.countdown = true,
     this.pedalAction = 'nextSection',
     this.displayFont = AppTextStyles.fontFamily,
     this.textAlignLeft = false,
@@ -33,6 +37,7 @@ class AppSettings {
     double? fontSize,
     double? scrollSpeedMultiplier,
     bool? autoAdvance,
+    bool? countdown,
     String? pedalAction,
     String? displayFont,
     bool? textAlignLeft,
@@ -45,6 +50,7 @@ class AppSettings {
         scrollSpeedMultiplier:
             scrollSpeedMultiplier ?? this.scrollSpeedMultiplier,
         autoAdvance: autoAdvance ?? this.autoAdvance,
+        countdown: countdown ?? this.countdown,
         pedalAction: pedalAction ?? this.pedalAction,
         displayFont: displayFont ?? this.displayFont,
         textAlignLeft: textAlignLeft ?? this.textAlignLeft,
@@ -59,6 +65,7 @@ class SettingsService {
   static const _kFontSize = 'font_size';
   static const _kScrollSpeed = 'scroll_speed';
   static const _kAutoAdvance = 'auto_advance';
+  static const _kCountdown = 'countdown';
   static const _kPedalAction = 'pedal_action';
   static const _kDisplayFont = 'display_font';
   static const _kTextAlignLeft = 'text_align_left';
@@ -73,6 +80,7 @@ class SettingsService {
       scrollSpeedMultiplier: prefs.getDouble(_kScrollSpeed) ??
           ScrollConstants.defaultSpeedMultiplier,
       autoAdvance: prefs.getBool(_kAutoAdvance) ?? true,
+      countdown: prefs.getBool(_kCountdown) ?? true,
       pedalAction: prefs.getString(_kPedalAction) ?? 'nextSection',
       displayFont: prefs.getString(_kDisplayFont) ?? AppTextStyles.fontFamily,
       textAlignLeft: prefs.getBool(_kTextAlignLeft) ?? false,
@@ -88,6 +96,7 @@ class SettingsService {
     await prefs.setDouble(_kFontSize, s.fontSize);
     await prefs.setDouble(_kScrollSpeed, s.scrollSpeedMultiplier);
     await prefs.setBool(_kAutoAdvance, s.autoAdvance);
+    await prefs.setBool(_kCountdown, s.countdown);
     await prefs.setString(_kPedalAction, s.pedalAction);
     await prefs.setString(_kDisplayFont, s.displayFont);
     await prefs.setBool(_kTextAlignLeft, s.textAlignLeft);
