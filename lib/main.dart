@@ -24,6 +24,9 @@ void main() async {
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
+      // The whole screen from the start; the size above is the fallback
+      // when the window is restored
+      await windowManager.maximize();
     });
   } else {
     // Draw behind the status and navigation bars, which stay light-on-dark
