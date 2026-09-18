@@ -398,7 +398,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
       AppPlatform.isTouch
           ? 'Editing this line — tap Save when you\'re done'
           : 'Enter saves · Esc cancels · Shift+Enter for a new line · '
-              'Delete on an empty line removes it',
+                'Delete on an empty line removes it',
       const Duration(seconds: 5),
     );
   }
@@ -417,7 +417,11 @@ class _TeleprompterViewState extends State<TeleprompterView>
     final line = _script.allLines[index];
     final start = line.rawStart!;
     await _replaceEditedLine(
-        start, start + line.text.length, newText, lineFormatting);
+      start,
+      start + line.text.length,
+      newText,
+      lineFormatting,
+    );
   }
 
   /// Takes the line out, with the line break that separated it from its
@@ -894,7 +898,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
                   scrollEngine: _scrollEngine,
                   accent: _songTheme.accent,
                 ),
-              if (!_recordingTiming)
+              if (!_recordingTiming &&
+                  !(_editingLine != null && AppPlatform.isTouch))
                 Positioned.fill(
                   child: ListenableBuilder(
                     listenable: _audioService,
@@ -944,6 +949,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
                     ),
                   ),
                 ),
+              if (_editingLine != null) _inlineEditor(context),
               // While recording on a phone, the whole screen is the tap
               // target: one tap per line, no keyboard needed
               if (_recordingTiming && AppPlatform.isTouch)
@@ -974,6 +980,55 @@ class _TeleprompterViewState extends State<TeleprompterView>
     );
   }
 
+  /// The line being edited, in its stage font where it stands. On a phone
+  /// the box sits at the top, clear of the keyboard, in a size that fits.
+  Widget _inlineEditor(BuildContext context) {
+    final index = _editingLine!;
+    final lines = _displayScript.allLines;
+    if (index >= lines.length) return const SizedBox.shrink();
+    final line = lines[index];
+    final size = MediaQuery.sizeOf(context);
+    final narrow = size.width < 600;
+    final phone = AppPlatform.isTouch;
+
+    double top;
+    if (phone) {
+      top = MediaQuery.paddingOf(context).top + 12;
+    } else {
+      final anchorY = size.height * _settings.activeLineYOffset;
+      final lineHeight = _effectiveLineHeight;
+      final activeIdx = _scrollEngine.activeLineIndex;
+      top =
+          anchorY +
+          (index - activeIdx) * lineHeight -
+          (_scrollEngine.pixelOffset - activeIdx * lineHeight);
+    }
+    final fontSize = narrow
+        ? (_settings.fontSize < 28 ? _settings.fontSize : 28.0)
+        : _settings.fontSize;
+
+    return Positioned(
+      key: ValueKey('edit-$index'),
+      left: narrow ? 16 : 48,
+      right: narrow ? 16 : 48,
+      top: top,
+      child: InlineLineEditor(
+        text: line.text,
+        spans: _formatting.forLine(line),
+        style: AppTextStyles.activeLine(
+          fontSize,
+          displayFont: _settings.displayFont,
+        ).copyWith(color: _songTheme.text),
+        textAlign: _settings.textAlignLeft ? TextAlign.left : TextAlign.center,
+        accent: _songTheme.accent,
+        textColor: _songTheme.text,
+        onSave: _saveEditedLine,
+        onCancel: _cancelEditLine,
+        onDelete: _deleteEditedLine,
+      ),
+    );
+  }
+
   Widget _buildCanvas() {
     return RepaintBoundary(
       child: ListenableBuilder(
@@ -990,7 +1045,6 @@ class _TeleprompterViewState extends State<TeleprompterView>
               ? _scrollEngine.clockSeconds
               : null;
 
-          Widget? editor;
           final lineWidgets = List.generate(lines.length, (i) {
             final y =
                 anchorY +
@@ -1025,30 +1079,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
               if (activeWordIndex < 0) activeWordIndex = 0;
             }
 
+            // The line being edited is drawn by _inlineEditor, above everything
             if (i == _editingLine) {
-              // Drawn last, over the lines below it
-              editor = Positioned(
-                key: ValueKey(i),
-                left: 48,
-                right: 48,
-                top: y,
-                child: InlineLineEditor(
-                  text: lines[i].text,
-                  spans: _formatting.forLine(lines[i]),
-                  style: AppTextStyles.activeLine(
-                    _settings.fontSize,
-                    displayFont: _settings.displayFont,
-                  ).copyWith(color: _songTheme.text),
-                  textAlign: _settings.textAlignLeft
-                      ? TextAlign.left
-                      : TextAlign.center,
-                  accent: _songTheme.accent,
-                  textColor: _songTheme.text,
-                  onSave: _saveEditedLine,
-                  onCancel: _cancelEditLine,
-                  onDelete: _deleteEditedLine,
-                ),
-              );
               return const SizedBox.shrink();
             }
 
@@ -1084,10 +1116,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
             );
           });
           return ClipRect(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [...lineWidgets, ?editor],
-            ),
+            child: Stack(fit: StackFit.expand, children: lineWidgets),
           );
         },
       ),

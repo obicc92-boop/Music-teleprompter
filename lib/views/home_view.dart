@@ -1738,7 +1738,7 @@ class _SongRowState extends State<_SongRow> {
                   ),
                 ),
               SizedBox(
-                width: widget.compact ? 92 : _SongRow.actionsWidth,
+                width: widget.compact ? 100 : _SongRow.actionsWidth,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
