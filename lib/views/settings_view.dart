@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../models/shortcuts.dart';
 import '../services/settings_service.dart';
+import '../utils/app_platform.dart';
 import '../utils/constants.dart';
 import '../widgets/theme_picker.dart';
 
@@ -348,41 +351,30 @@ class _SettingsViewState extends State<SettingsView> {
   // ── Shortcuts panel ────────────────────────────────────────────────────────
 
   Widget _shortcutsPanel() {
+    final shortcuts = _settings.shortcuts;
+    // Phones have no keys to press, so they only get the list
+    final editable = !AppPlatform.isTouch;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _ShortcutGroup(
-          title: 'Playback',
-          rows: const [
-            ('Space', 'Play / pause'),
-            ('+ / −', 'Speed up / slow down'),
-            ('T', 'Tap tempo'),
-            ('R', 'Reset to start'),
-            ('L', 'Toggle loop section'),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _ShortcutGroup(
-          title: 'Navigation',
-          rows: const [
-            ('↑ / ↓', 'Scroll up / down'),
-            ('→ / ←', 'Next / previous section'),
-            ('N', 'Next song'),
-            ('P', 'Previous song'),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _ShortcutGroup(
-          title: 'Display',
-          rows: const [
-            ('F', 'Toggle fullscreen'),
-            ('M', 'Toggle mirror mode'),
-            ('E', 'Edit lyrics'),
-            ('Double-click a line', 'Edit it where it is'),
-            ('Esc', 'Back to setlist'),
-          ],
-        ),
-        const SizedBox(height: 16),
+        for (final group in ShortcutGroup.values) ...[
+          _EditableShortcutGroup(
+            title: group.title,
+            actions: [
+              for (final a in ShortcutAction.values)
+                if (a.group == group) a,
+            ],
+            shortcuts: shortcuts,
+            editable: editable,
+            onChange: _changeShortcut,
+            onReset: (action) =>
+                _update(_settings.copyWith(shortcuts: shortcuts.reset(action))),
+            extraRows: group == ShortcutGroup.display
+                ? const [('Double-click a line', 'Edit it where it is')]
+                : const [],
+          ),
+          const SizedBox(height: 16),
+        ],
         _ShortcutGroup(
           title: 'Foot Pedal (configurable in Controls)',
           rows: const [
@@ -391,12 +383,105 @@ class _SettingsViewState extends State<SettingsView> {
           ],
         ),
         const SizedBox(height: 12),
-        const _HintBox(lines: [
-          'Foot pedal action is set in the Controls tab',
+        if (editable && !shortcuts.allDefault) ...[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _resetAllShortcuts,
+              icon: const Icon(Icons.restart_alt_rounded, size: 16),
+              label: const Text('Reset all to defaults'),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        _HintBox(lines: [
+          if (editable) 'Click a key to choose a different one',
+          'Foot pedal keys stay as they are; its action is set in the Controls tab',
           'Compatible with AirTurn, PageFlip, and most HID pedals',
         ]),
       ],
     );
+  }
+
+  /// Asks for a new key for [action], sorting out a clash with another
+  /// action's key when there is one.
+  Future<void> _changeShortcut(ShortcutAction action) async {
+    final shortcuts = _settings.shortcuts;
+    final picked = await showDialog<_PickedKey>(
+      context: context,
+      builder: (_) => _KeyCaptureDialog(
+        action: action,
+        current: shortcuts.bindingFor(action),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final binding = picked.binding;
+    if (binding == null) {
+      _update(_settings.copyWith(shortcuts: shortcuts.withBinding(action, null)));
+      return;
+    }
+    final other = shortcuts.actionUsing(binding, except: action);
+    if (other == null) {
+      _update(
+          _settings.copyWith(shortcuts: shortcuts.withBinding(action, binding)));
+      return;
+    }
+    final choice = await showDialog<_ClashChoice>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${binding.label} is already ${other.label}'),
+        content: Text(
+          'Use ${binding.label} for ${action.label} and give '
+          '${shortcuts.keyLabel(action) ?? 'no key'} to ${other.label}, '
+          'or leave ${other.label} without a key?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _ClashChoice.takeIt),
+            child: Text('Leave ${other.label} without a key'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, _ClashChoice.swap),
+            child: const Text('Swap them'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+    var updated = shortcuts.withBinding(action, binding);
+    updated = updated.withBinding(
+      other,
+      choice == _ClashChoice.swap ? shortcuts.bindingFor(action) : null,
+    );
+    _update(_settings.copyWith(shortcuts: updated));
+  }
+
+  Future<void> _resetAllShortcuts() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset all shortcuts?'),
+        content: const Text('Every key goes back to what it was when the app '
+            'was installed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset all'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      _update(_settings.copyWith(shortcuts: ShortcutMap.standard));
+    }
   }
 
   // ── Shared slider ──────────────────────────────────────────────────────────
@@ -1012,6 +1097,256 @@ class _FontChip extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _ClashChoice { swap, takeIt }
+
+/// The outcome of choosing a key: a binding, or null to take the key away.
+class _PickedKey {
+  final KeyBinding? binding;
+  const _PickedKey(this.binding);
+}
+
+/// Waits for the key the user wants for an action.
+class _KeyCaptureDialog extends StatefulWidget {
+  final ShortcutAction action;
+  final KeyBinding? current;
+  const _KeyCaptureDialog({required this.action, required this.current});
+
+  @override
+  State<_KeyCaptureDialog> createState() => _KeyCaptureDialogState();
+}
+
+class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
+  String? _problem;
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      Navigator.pop(context);
+      return KeyEventResult.handled;
+    }
+    if (KeyBinding.isModifier(key)) return KeyEventResult.handled;
+    if (KeyBinding.isPedalKey(key)) {
+      setState(() => _problem =
+          '${KeyBinding.keyName(KeyBinding.normalise(key))} is a foot pedal '
+          'key — try another');
+      return KeyEventResult.handled;
+    }
+    Navigator.pop(context, _PickedKey(KeyBinding.fromEvent(event)));
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: AlertDialog(
+        title: Text('Key for ${widget.action.label}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 22),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.accent.withValues(alpha: 0.6),
+                ),
+              ),
+              child: const Column(
+                children: [
+                  Icon(Icons.keyboard_rounded,
+                      size: 28, color: AppColors.accentText),
+                  SizedBox(height: 8),
+                  Text(
+                    'Press a key…',
+                    style: TextStyle(
+                      fontFamily: AppTextStyles.ui,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _problem ??
+                  (widget.current == null
+                      ? 'Hold Ctrl, Alt or Shift with it if you like. '
+                          'Esc cancels.'
+                      : 'Now ${widget.current!.label}. Hold Ctrl, Alt or '
+                          'Shift with it if you like. Esc cancels.'),
+              style: TextStyle(
+                fontFamily: AppTextStyles.ui,
+                fontSize: 12,
+                color: _problem != null ? AppColors.danger : AppColors.uiHint,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (widget.current != null)
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(context, const _PickedKey(null)),
+              child: const Text('No key'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shortcut rows whose keys can be clicked and changed.
+class _EditableShortcutGroup extends StatelessWidget {
+  final String title;
+  final List<ShortcutAction> actions;
+  final ShortcutMap shortcuts;
+  final bool editable;
+  final ValueChanged<ShortcutAction> onChange;
+  final ValueChanged<ShortcutAction> onReset;
+
+  /// Things listed alongside that aren't keys, such as a double-click.
+  final List<(String, String)> extraRows;
+
+  const _EditableShortcutGroup({
+    required this.title,
+    required this.actions,
+    required this.shortcuts,
+    required this.editable,
+    required this.onChange,
+    required this.onReset,
+    this.extraRows = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[
+      for (final action in actions) _actionRow(action),
+      for (final (key, label) in extraRows) _row(_keyCap(key), label),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title.toUpperCase(),
+          style: const TextStyle(
+            fontFamily: AppTextStyles.ui,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: AppColors.uiHint,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surfaceElevated,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            children: [
+              for (int i = 0; i < rows.length; i++) ...[
+                if (i > 0) Container(height: 1, color: AppColors.surface),
+                rows[i],
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _actionRow(ShortcutAction action) {
+    final binding = shortcuts.bindingFor(action);
+    final isDefault = shortcuts.isDefault(action);
+    Widget cap = _keyCap(binding?.label ?? 'No key', dim: binding == null);
+    if (editable) {
+      cap = Tooltip(
+        message: 'Click to choose a different key',
+        waitDuration: const Duration(milliseconds: 600),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(5),
+          onTap: () => onChange(action),
+          child: cap,
+        ),
+      );
+    }
+    return _row(
+      cap,
+      action.label,
+      trailing: editable && !isDefault
+          ? Tooltip(
+              message:
+                  'Back to ${ShortcutMap.defaults[action]!.label}',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => onReset(action),
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.restart_alt_rounded,
+                      size: 16, color: AppColors.uiHint),
+                ),
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _keyCap(String text, {bool dim = false}) => Container(
+        constraints: const BoxConstraints(minWidth: 44),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(
+              color: AppColors.uiHint.withValues(alpha: 0.3), width: 1),
+        ),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontFamily: AppTextStyles.mono,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: dim ? AppColors.uiMuted : AppColors.uiText,
+          ),
+        ),
+      );
+
+  Widget _row(Widget cap, String label, {Widget? trailing}) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          children: [
+            cap,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: AppTextStyles.ui,
+                  fontSize: 12,
+                  color: AppColors.uiText,
+                ),
+              ),
+            ),
+            ?trailing,
+          ],
+        ),
+      );
 }
 
 class _ShortcutGroup extends StatelessWidget {

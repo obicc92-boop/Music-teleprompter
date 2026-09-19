@@ -73,7 +73,7 @@ void main() {
       (tester) async {
     await pumpOverlay(tester, width: 800, timingLabel: 'Rehearsal timing');
     // A layout overflow would already have failed the test
-    for (final tooltip in ['Back (ESC)', 'More', 'Settings', 'Fullscreen (F)']) {
+    for (final tooltip in ['Back (Esc)', 'More', 'Settings', 'Fullscreen (F)']) {
       expect(find.byTooltip(tooltip), findsOneWidget, reason: tooltip);
     }
     await unmount(tester);

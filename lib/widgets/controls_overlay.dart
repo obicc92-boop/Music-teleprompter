@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
+import '../models/shortcuts.dart';
 import '../models/song_theme.dart';
 import 'theme_picker.dart';
 import '../utils/app_platform.dart';
@@ -29,6 +30,7 @@ enum _MoreAction {
 class ControlsOverlay extends StatefulWidget {
   final SyncEngine syncEngine;
   final ScrollEngine scrollEngine;
+  final ShortcutMap shortcuts;
   final VoidCallback onPlayPause;
   /// Null where the app is always full screen (phones and tablets).
   final VoidCallback? onFullscreen;
@@ -73,6 +75,7 @@ class ControlsOverlay extends StatefulWidget {
     super.key,
     required this.syncEngine,
     required this.scrollEngine,
+    this.shortcuts = ShortcutMap.standard,
     required this.onPlayPause,
     required this.onFullscreen,
     required this.onSettings,
@@ -210,7 +213,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
 
   Widget _nextSongButton() {
     return Tooltip(
-      message: 'Next song  [N]',
+      message: 'Next song${widget.shortcuts.hint(ShortcutAction.nextSong)}',
       child: Opacity(
         opacity: 0.75,
         child: Material(
@@ -255,7 +258,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
 
   Widget _prevSongButton() {
     return Tooltip(
-      message: 'Previous song  [P]',
+      message:
+          'Previous song${widget.shortcuts.hint(ShortcutAction.prevSong)}',
       child: Opacity(
         opacity: 0.75,
         child: Material(
@@ -477,7 +481,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       size: 32,
       color: AppColors.accent,
       onTap: widget.onPlayPause,
-      tooltip: isPlaying ? 'Pause (Space)' : 'Play (Space)',
+      tooltip: (isPlaying ? 'Pause' : 'Play') +
+          widget.shortcuts.hint(ShortcutAction.playPause),
     );
   }
 
@@ -489,7 +494,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           icon: Icons.remove,
           size: 18,
           onTap: () => widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep),
-          tooltip: 'Slow down (−)',
+          tooltip: 'Slow down${widget.shortcuts.hint(ShortcutAction.speedDown)}',
         ),
         const SizedBox(width: 4),
         SizedBox(
@@ -522,7 +527,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           icon: Icons.add,
           size: 18,
           onTap: () => widget.syncEngine.adjustSpeed(ScrollConstants.speedStep),
-          tooltip: 'Speed up (+)',
+          tooltip: 'Speed up${widget.shortcuts.hint(ShortcutAction.speedUp)}',
         ),
         const SizedBox(width: 4),
         SizedBox(
@@ -597,7 +602,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
   Widget _backButton() => _iconButton(
         icon: Icons.arrow_back_rounded,
         onTap: widget.onBack,
-        tooltip: 'Back (ESC)',
+        tooltip: 'Back${widget.shortcuts.hint(ShortcutAction.back)}',
       );
 
   Widget _loopButton() {
@@ -610,7 +615,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           color: enabled ? AppColors.loopMarker : AppColors.uiText,
           onTap: () =>
               widget.scrollEngine.setLoopEnabled(!enabled),
-          tooltip: enabled ? 'Loop section: on (L)' : 'Loop section (L)',
+          tooltip: (enabled ? 'Loop section: on' : 'Loop section') +
+              widget.shortcuts.hint(ShortcutAction.loop),
         );
       },
     );
@@ -658,7 +664,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
         icon: Icons.edit_rounded,
         size: 20,
         onTap: widget.onEdit,
-        tooltip: 'Edit lyrics (E)',
+        tooltip: 'Edit lyrics${widget.shortcuts.hint(ShortcutAction.edit)}',
       );
 
   Widget _settingsButton() => _iconButton(
@@ -673,8 +679,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
             : Icons.fullscreen_rounded,
         onTap: widget.onFullscreen ?? () {},
         tooltip: widget.isFullscreen
-            ? 'Exit fullscreen (F)'
-            : 'Fullscreen (F)',
+            ? 'Exit fullscreen${widget.shortcuts.hint(ShortcutAction.fullscreen)}'
+            : 'Fullscreen${widget.shortcuts.hint(ShortcutAction.fullscreen)}',
       );
 
   // ── More menu ──────────────────────────────────────────────────────────────
@@ -709,7 +715,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       // Speed tools don't apply to a song that follows its timing
       if (!timed) ...[
         _menuItem(_MoreAction.tapTempo, Icons.speed_rounded, 'Tap tempo…',
-            shortcut: 'T'),
+            shortcut: widget.shortcuts.keyLabel(ShortcutAction.tapTempo)),
         _menuItem(_MoreAction.duration, Icons.timer_outlined,
             'Set song duration…'),
       ],
@@ -724,7 +730,8 @@ class _ControlsOverlayState extends State<ControlsOverlay>
           'Cue mode: line by line',
           checked: widget.cueMode),
       _menuItem(_MoreAction.mirror, Icons.flip_rounded, 'Mirror text',
-          shortcut: 'M', checked: widget.isMirrored),
+          shortcut: widget.shortcuts.keyLabel(ShortcutAction.mirror),
+          checked: widget.isMirrored),
       const PopupMenuDivider(height: 8),
       _menuItem(
         _MoreAction.theme,
@@ -750,7 +757,7 @@ class _ControlsOverlayState extends State<ControlsOverlay>
       ),
       if (widget.onEdit != null)
         _menuItem(_MoreAction.edit, Icons.edit_rounded, 'Edit lyrics…',
-            shortcut: 'E'),
+            shortcut: widget.shortcuts.keyLabel(ShortcutAction.edit)),
       _menuItem(
         _MoreAction.remote,
         Icons.wifi_rounded,

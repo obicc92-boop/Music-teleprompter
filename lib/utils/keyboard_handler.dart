@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
+import '../models/shortcuts.dart';
 import '../utils/constants.dart';
 
 class TeleprompterKeyboardHandler extends StatefulWidget {
@@ -17,6 +18,9 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onPlayPauseOverride;
   final String pedalAction;
+
+  /// Which key does what; the user's own choices, or the defaults.
+  final ShortcutMap shortcuts;
 
   /// Lets the owner give keys back after something else (e.g. the timing
   /// recorder) held focus.
@@ -45,6 +49,7 @@ class TeleprompterKeyboardHandler extends StatefulWidget {
     this.onEdit,
     this.onPlayPauseOverride,
     this.pedalAction = 'nextSection',
+    this.shortcuts = ShortcutMap.standard,
     this.focusNode,
     this.enabled = true,
     this.onJumpNextSection,
@@ -94,79 +99,60 @@ class _TeleprompterKeyboardHandlerState
       return KeyEventResult.ignored;
     }
 
-    final key = event.logicalKey;
+    final key = KeyBinding.normalise(event.logicalKey);
 
-    if (key == LogicalKeyboardKey.space) {
-      if (widget.onPlayPauseOverride != null) {
-        widget.onPlayPauseOverride!();
-      } else {
-        widget.syncEngine.togglePlayPause();
-      }
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowUp) {
-      widget.scrollEngine.scrollByLines(-1);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowDown) {
-      widget.scrollEngine.scrollByLines(1);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowRight) {
-      _jumpNext();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowLeft) {
-      _jumpPrev();
-      return KeyEventResult.handled;
-    }
     // Speed keys and tap tempo don't apply to a song following its timing
     final timed = widget.scrollEngine.isTimed;
-    if (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.numpadAdd) {
-      if (!timed) widget.syncEngine.adjustSpeed(ScrollConstants.speedStep);
-      return KeyEventResult.handled;
+    switch (widget.shortcuts.actionFor(event)) {
+      case ShortcutAction.playPause:
+        _playPause();
+      case ShortcutAction.scrollUp:
+        widget.scrollEngine.scrollByLines(-1);
+      case ShortcutAction.scrollDown:
+        widget.scrollEngine.scrollByLines(1);
+      case ShortcutAction.nextSection:
+        _jumpNext();
+      case ShortcutAction.prevSection:
+        _jumpPrev();
+      case ShortcutAction.speedUp:
+        if (!timed) widget.syncEngine.adjustSpeed(ScrollConstants.speedStep);
+      case ShortcutAction.speedDown:
+        if (!timed) widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep);
+      case ShortcutAction.fullscreen:
+        widget.onToggleFullscreen();
+      case ShortcutAction.resetToStart:
+        widget.scrollEngine.resetToStart();
+      case ShortcutAction.loop:
+        widget.scrollEngine.setLoopEnabled(!widget.scrollEngine.loopEnabled);
+      case ShortcutAction.mirror:
+        widget.onToggleMirror?.call();
+      case ShortcutAction.tapTempo:
+        if (!timed) widget.onTapTempo?.call();
+      case ShortcutAction.nextSong:
+        widget.onNextScript?.call();
+      case ShortcutAction.edit:
+        widget.onEdit?.call();
+      case ShortcutAction.prevSong:
+        widget.onPrevScript?.call();
+      case ShortcutAction.back:
+        widget.onBack();
+      case null:
+        return _handlePedalKey(key);
     }
-    if (key == LogicalKeyboardKey.minus || key == LogicalKeyboardKey.numpadSubtract) {
-      if (!timed) widget.syncEngine.adjustSpeed(-ScrollConstants.speedStep);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyF) {
-      widget.onToggleFullscreen();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyR) {
-      widget.scrollEngine.resetToStart();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyL) {
-      widget.scrollEngine.setLoopEnabled(!widget.scrollEngine.loopEnabled);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyM) {
-      widget.onToggleMirror?.call();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyT) {
-      if (!timed) widget.onTapTempo?.call();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyN) {
-      widget.onNextScript?.call();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyE) {
-      widget.onEdit?.call();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.keyP) {
-      widget.onPrevScript?.call();
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.escape) {
-      widget.onBack();
-      return KeyEventResult.handled;
-    }
+    return KeyEventResult.handled;
+  }
 
+  void _playPause() {
+    if (widget.onPlayPauseOverride != null) {
+      widget.onPlayPauseOverride!();
+    } else {
+      widget.syncEngine.togglePlayPause();
+    }
+  }
+
+  // Foot pedals send PageDown / Enter and PageUp; those keys keep their
+  // pedal meaning whatever the shortcuts say
+  KeyEventResult _handlePedalKey(LogicalKeyboardKey key) {
     if (key == LogicalKeyboardKey.pageDown || key == LogicalKeyboardKey.enter) {
       switch (widget.pedalAction) {
         case 'nextSection':
@@ -174,9 +160,7 @@ class _TeleprompterKeyboardHandlerState
         case 'nextSong':
           widget.onNextScript?.call();
         case 'playPause':
-          widget.onPlayPauseOverride != null
-              ? widget.onPlayPauseOverride!()
-              : widget.syncEngine.togglePlayPause();
+          _playPause();
       }
       return KeyEventResult.handled;
     }
@@ -187,13 +171,10 @@ class _TeleprompterKeyboardHandlerState
         case 'nextSong':
           widget.onPrevScript?.call();
         case 'playPause':
-          widget.onPlayPauseOverride != null
-              ? widget.onPlayPauseOverride!()
-              : widget.syncEngine.togglePlayPause();
+          _playPause();
       }
       return KeyEventResult.handled;
     }
-
     return KeyEventResult.ignored;
   }
 

@@ -9,6 +9,7 @@ import '../engine/sync_engine.dart';
 import '../engine/scroll_engine.dart';
 import '../models/script.dart';
 import '../models/script_formatting.dart';
+import '../models/shortcuts.dart';
 import '../services/audio_service.dart';
 import '../services/chord_transposer.dart';
 import '../services/file_service.dart';
@@ -461,7 +462,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
     if (_recordingTiming || _editingLine != null) return;
     if (_script.allLines[index].rawStart == null) {
       _showNotice(
-        'This line can\'t be edited here — use Edit (E) instead',
+        'This line can\'t be edited here — use Edit'
+            '${_settings.shortcuts.hint(ShortcutAction.edit)} instead',
         const Duration(seconds: 4),
       );
       return;
@@ -473,8 +475,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
     setState(() => _editingLine = index);
     _showNotice(
       AppPlatform.isTouch
-          ? 'Editing this line — tap Save when you\'re done'
-          : 'Enter saves · Esc cancels · Shift+Enter for a new line · '
+          ? 'Editing this line — tap Done, or anywhere else, when you\'re done'
+          : 'Enter keeps it · Esc cancels · Shift+Enter for a new line · '
                 'Delete on an empty line removes it',
       const Duration(seconds: 5),
     );
@@ -637,7 +639,8 @@ class _TeleprompterViewState extends State<TeleprompterView>
     _showNotice(
       AppPlatform.isTouch
           ? 'Go back again to leave this song'
-          : 'Press Esc again to leave this song',
+          : 'Press ${_settings.shortcuts.keyLabel(ShortcutAction.back) ?? 'Back'} '
+              'again to leave this song',
       const Duration(seconds: 3),
     );
   }
@@ -904,6 +907,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
       onJumpNextSection: _jumpNextSection,
       onJumpPrevSection: _jumpPrevSection,
       pedalAction: _settings.pedalAction,
+      shortcuts: _settings.shortcuts,
       focusNode: _keyboardFocus,
       enabled: _editingLine == null,
       child: Scaffold(
@@ -978,6 +982,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
                     builder: (context, _) => ControlsOverlay(
                       syncEngine: widget.syncEngine,
                       scrollEngine: _scrollEngine,
+                      shortcuts: _settings.shortcuts,
                       onPlayPause: _onPlayPauseRequested,
                       onFullscreen: AppPlatform.isDesktop
                           ? _toggleFullscreen

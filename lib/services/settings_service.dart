@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/shortcuts.dart';
 import '../models/song_theme.dart';
 import '../utils/constants.dart';
 
@@ -18,6 +19,9 @@ class AppSettings {
   /// The lyrics screen's colours, as saved by [SongTheme.code].
   final String colorTheme;
 
+  /// Which key does what on the song screen.
+  final ShortcutMap shortcuts;
+
   const AppSettings({
     this.fontSize = AppDimensions.defaultFontSize,
     this.scrollSpeedMultiplier = ScrollConstants.defaultSpeedMultiplier,
@@ -29,6 +33,7 @@ class AppSettings {
     this.activeLineYOffset = AppDimensions.activeLineYOffset,
     this.showActiveLineHighlight = true,
     this.colorTheme = 'default',
+    this.shortcuts = ShortcutMap.standard,
   });
 
   SongTheme get songTheme => SongTheme.fromCode(colorTheme);
@@ -44,6 +49,7 @@ class AppSettings {
     double? activeLineYOffset,
     bool? showActiveLineHighlight,
     String? colorTheme,
+    ShortcutMap? shortcuts,
   }) =>
       AppSettings(
         fontSize: fontSize ?? this.fontSize,
@@ -58,6 +64,7 @@ class AppSettings {
         showActiveLineHighlight:
             showActiveLineHighlight ?? this.showActiveLineHighlight,
         colorTheme: colorTheme ?? this.colorTheme,
+        shortcuts: shortcuts ?? this.shortcuts,
       );
 }
 
@@ -72,6 +79,7 @@ class SettingsService {
   static const _kActiveLineYOffset = 'active_line_y_offset';
   static const _kShowHighlight = 'show_active_line_highlight';
   static const _kColorTheme = 'color_theme';
+  static const _kShortcuts = 'shortcuts';
 
   Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -88,6 +96,7 @@ class SettingsService {
           AppDimensions.activeLineYOffset,
       showActiveLineHighlight: prefs.getBool(_kShowHighlight) ?? true,
       colorTheme: prefs.getString(_kColorTheme) ?? 'default',
+      shortcuts: ShortcutMap.fromJson(prefs.getString(_kShortcuts)),
     );
   }
 
@@ -103,5 +112,6 @@ class SettingsService {
     await prefs.setDouble(_kActiveLineYOffset, s.activeLineYOffset);
     await prefs.setBool(_kShowHighlight, s.showActiveLineHighlight);
     await prefs.setString(_kColorTheme, s.colorTheme);
+    await prefs.setString(_kShortcuts, s.shortcuts.toJson());
   }
 }
