@@ -135,16 +135,19 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     SettingsService().save(updated);
   }
 
-  // Auto-advance, the countdown and the foot pedal stay the same for
-  // every song.
+  // Settings opened on a song mostly change that song alone; auto-advance,
+  // the countdown, the foot pedal and the shortcuts belong to the whole app
+  // whichever screen they're changed from
   void _onSongSettingsChanged(AppSettings updated) {
     if (updated.autoAdvance != _settings.autoAdvance ||
         updated.countdown != _settings.countdown ||
-        updated.pedalAction != _settings.pedalAction) {
+        updated.pedalAction != _settings.pedalAction ||
+        updated.shortcuts != _settings.shortcuts) {
       _onDefaultSettingsChanged(_settings.copyWith(
         autoAdvance: updated.autoAdvance,
         countdown: updated.countdown,
         pedalAction: updated.pedalAction,
+        shortcuts: updated.shortcuts,
       ));
     }
     _saveSongSettings(_songSettings.withChanges(_activeSongSettings, updated));
