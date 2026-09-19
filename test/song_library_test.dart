@@ -94,6 +94,53 @@ void main() {
     expect(await File('${scripts.path}/Lalala.fmt.json').exists(), false);
   });
 
+  test('deleting a song removes its file, its data and its setlist entries',
+      () async {
+    final files = FileService();
+    final path = await files.saveToLibrary('la la', 'Lalala');
+    final other = await files.saveToLibrary('do re', 'Doremi');
+    await SongSettingsStore.saveSettings(
+        'Lalala', const SongSettings(scrollSpeedMultiplier: 1.4));
+    await SongLrcContentStore.saveContent('Lalala', '[00:01.00]La la la');
+    await SongTransposeStore.saveTranspose('Lalala', 2);
+    await FormattingService()
+        .save('Lalala', ScriptFormatting.empty.apply(0, 2, bold: true));
+
+    final scripts = Directory('${appDir.path}/scripts');
+    await File('${scripts.path}/setlists.json').writeAsString(jsonEncode([
+      {
+        'id': '1',
+        'name': 'Concert',
+        'items': [
+          // Older entries were saved with the other kind of slash, and a
+          // setlist keeps the full title where the file can't
+          {
+            'id': 'a',
+            'type': 'song',
+            'title': 'La, la, la!',
+            'path': path.contains('/')
+                ? path.replaceAll('/', r'\')
+                : path.replaceAll(r'\', '/'),
+          },
+          {'id': 'b', 'type': 'separator', 'text': 'Break'},
+          {'id': 'c', 'type': 'song', 'title': 'Doremi', 'path': other},
+        ],
+      },
+    ]));
+
+    await SongLibrary.delete(title: 'Lalala', path: path);
+
+    expect(await File(path).exists(), false);
+    expect(await File(other).exists(), true);
+    expect(await File('${scripts.path}/Lalala.fmt.json').exists(), false);
+    expect((await SongSettingsStore.getSettings('Lalala')).isEmpty, true);
+    expect(await SongLrcContentStore.getContent('Lalala'), isNull);
+    expect(await SongTransposeStore.getTranspose('Lalala'), 0);
+
+    final setlist = (await SetlistService().load()).single;
+    expect(setlist.items.map((i) => i.id), ['b', 'c']);
+  });
+
   test('a song can take a title that only differs in punctuation', () async {
     final files = FileService();
     await files.saveToLibrary('la', 'Lalala');

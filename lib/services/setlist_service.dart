@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/setlist_models.dart';
+import '../utils/same_path.dart';
 import 'song_settings_store.dart';
 
 class SetlistService {
@@ -60,7 +62,7 @@ class SetlistService {
         s.copyWith(items: [
           for (final item in s.items)
             if (item.isSong &&
-                (item.path == oldPath || item.title == oldTitle))
+                (samePath(item.path, oldPath) || item.title == oldTitle))
               () {
                 changed = true;
                 return item.copyWith(path: newPath, title: newTitle);
@@ -70,6 +72,31 @@ class SetlistService {
         ]),
     ];
     if (changed) await save(updated);
+  }
+
+  /// The setlist that was open last, so the home screen comes back to it
+  /// after a show, the editor, or a restart.
+  Future<String?> lastOpenedId() async =>
+      (await SharedPreferences.getInstance()).getString(_kLastOpened);
+
+  Future<void> rememberOpened(String id) async =>
+      (await SharedPreferences.getInstance()).setString(_kLastOpened, id);
+
+  static const _kLastOpened = 'last_setlist';
+
+  /// A song deleted from the library leaves every setlist.
+  Future<void> songRemoved({required String path, required String title}) async {
+    final setlists = await load();
+    final updated = [
+      for (final s in setlists)
+        s.copyWith(items: [
+          for (final item in s.items)
+            if (!(item.isSong &&
+                (samePath(item.path, path) || item.title == title)))
+              item,
+        ]),
+    ];
+    await save(updated);
   }
 
   /// Speed used to be set per setlist card; it now belongs to the song, so it

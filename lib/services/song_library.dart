@@ -41,6 +41,23 @@ class SongLibrary {
     return newPath;
   }
 
+  /// Removes the song's file, everything saved about it, and its entries in
+  /// every setlist.
+  static Future<void> delete({
+    required String title,
+    required String path,
+  }) async {
+    final file = File(path);
+    if (await file.exists()) await file.delete();
+    await FormattingService().delete(title);
+    await SongSettingsStore.saveSettings(title, SongSettings.none);
+    await SongLrcContentStore.removeContent(title);
+    await SongLrcStore.removePath(title);
+    await SongAudioStore.removePath(title);
+    await SongTransposeStore.saveTranspose(title, 0);
+    await SetlistService().songRemoved(path: path, title: title);
+  }
+
   static Future<void> _moveSongData(String from, String to) async {
     if (from == to) return;
 

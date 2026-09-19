@@ -9,10 +9,12 @@ import '../services/lrclib_service.dart';
 import '../services/script_parser.dart';
 import '../services/setlist_export_service.dart';
 import '../services/setlist_service.dart';
+import '../services/song_library.dart';
 import '../services/song_lrc_content_store.dart';
 import '../services/song_settings_store.dart';
 import '../utils/app_platform.dart';
 import '../utils/constants.dart';
+import '../utils/same_path.dart';
 import '../widgets/lrc_search_dialog.dart';
 
 const _palette = [
@@ -113,6 +115,17 @@ class _HomeViewState extends State<HomeView> {
   Set<String> _timedSongs = {}; // titles of songs that follow their timing
   Map<String, String> _songDetails = {}; // song file → "70 lines · 9 sections"
   String? _selectedId; // chosen with a click or ↑/↓; Enter launches it
+
+  // The library: every song saved, whether or not a setlist uses it
+  bool _showLibrary = _lastShowedLibrary;
+  List<({String title, String path})> _library = [];
+  String _libraryFilter = '';
+  final _libraryFilterCtrl = TextEditingController();
+
+  // Home is rebuilt from scratch after the editor or a show; this brings
+  // the user back to the library if that's where they were (the setlist
+  // they were on is remembered on disk, so it also survives a restart)
+  static bool _lastShowedLibrary = false;
   final _listFocus = FocusNode(debugLabel: 'SetlistKeys');
 
   // Inline editing state (one item at a time)
@@ -134,6 +147,7 @@ class _HomeViewState extends State<HomeView> {
     _editCtrl.dispose();
     _editFocus.dispose();
     _listFocus.dispose();
+    _libraryFilterCtrl.dispose();
     super.dispose();
   }
 
@@ -146,14 +160,51 @@ class _HomeViewState extends State<HomeView> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final setlists = await _setlistService.load();
+    final library = await _setlistService.librarySongs();
+    final lastOpened = await _setlistService.lastOpenedId();
     if (mounted) {
       setState(() {
         _setlists = setlists;
-        _activeTab = _activeTab.clamp(0, (setlists.length - 1).clamp(0, 9999));
+        _library = library;
+        final remembered = setlists.indexWhere((s) => s.id == lastOpened);
+        _activeTab = (remembered >= 0 ? remembered : _activeTab)
+            .clamp(0, (setlists.length - 1).clamp(0, 9999));
         _loading = false;
       });
       _loadSongInfo();
     }
+  }
+
+  void _showSetlist(int index) {
+    setState(() {
+      _activeTab = index;
+      _showLibrary = false;
+      _selectedId = null;
+    });
+    _setlistService.rememberOpened(_setlists[index].id);
+  }
+
+  // A library song is named after its file; a setlist keeps the full title
+  String _libraryTitle(({String title, String path}) song) {
+    for (final s in _setlists) {
+      for (final item in s.items) {
+        if (item.isSong && samePath(item.path, song.path)) return item.title;
+      }
+    }
+    return song.title;
+  }
+
+  int _setlistsUsing(String path) => _setlists
+      .where((s) => s.items.any((i) => i.isSong && samePath(i.path, path)))
+      .length;
+
+  List<({String title, String path})> get _filteredLibrary {
+    final q = _libraryFilter.trim().toLowerCase();
+    final all = [
+      for (final song in _library) (title: _libraryTitle(song), path: song.path),
+    ]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    if (q.isEmpty) return all;
+    return all.where((s) => s.title.toLowerCase().contains(q)).toList();
   }
 
   // Speed, timing and size shown on each row
@@ -161,27 +212,30 @@ class _HomeViewState extends State<HomeView> {
     final speeds = <String, double>{};
     final timed = <String>{};
     final details = Map<String, String>.of(_songDetails);
-    for (final setlist in _setlists) {
-      for (final item in setlist.items.where((i) => i.isSong)) {
-        final speed = (await SongSettingsStore.getSettings(
-          item.title,
-        )).scrollSpeedMultiplier;
-        if (speed != null) speeds[item.title] = speed;
-        if (await SongLrcContentStore.getContent(item.title) != null) {
-          timed.add(item.title);
-        }
-        if (!details.containsKey(item.path)) {
-          final content = await _fileService.readSavedScript(item.path);
-          if (content == null) {
-            details[item.path] = 'Lyrics file not found';
-          } else {
-            final script = ScriptParser.parse(content);
-            final lines = script.totalLines;
-            final sections = script.sections.length;
-            details[item.path] =
-                '$lines line${lines == 1 ? '' : 's'} · '
-                '$sections section${sections == 1 ? '' : 's'}';
-          }
+    final songs = <({String title, String path})>[
+      for (final setlist in _setlists)
+        for (final item in setlist.items.where((i) => i.isSong))
+          (title: item.title, path: item.path),
+      for (final song in _library) (title: _libraryTitle(song), path: song.path),
+    ];
+    for (final song in songs) {
+      final speed =
+          (await SongSettingsStore.getSettings(song.title)).scrollSpeedMultiplier;
+      if (speed != null) speeds[song.title] = speed;
+      if (await SongLrcContentStore.getContent(song.title) != null) {
+        timed.add(song.title);
+      }
+      if (!details.containsKey(song.path)) {
+        final content = await _fileService.readSavedScript(song.path);
+        if (content == null) {
+          details[song.path] = 'Lyrics file not found';
+        } else {
+          final script = ScriptParser.parse(content);
+          final lines = script.totalLines;
+          final sections = script.sections.length;
+          details[song.path] =
+              '$lines line${lines == 1 ? '' : 's'} · '
+              '$sections section${sections == 1 ? '' : 's'}';
         }
       }
     }
@@ -197,7 +251,7 @@ class _HomeViewState extends State<HomeView> {
   // ── Import from LRCLIB ────────────────────────────────────────────────────
 
   Future<void> _importFromLrclib() async {
-    if (_active == null) return;
+    if (_active == null && !_showLibrary) return;
     final picked = await showDialog<Object>(
       context: context,
       builder: (_) => LrcSearchDialog(songTitle: ''),
@@ -233,15 +287,21 @@ class _HomeViewState extends State<HomeView> {
       await SongLrcContentStore.saveContent(title, result.syncedLyrics!);
     }
 
-    // Add as a new song in the active setlist
-    final item = SetlistItem.song(path: path, title: title);
-    _updateActiveItems([..._active!.items, item]);
+    // Add as a new song in the active setlist, or just to the library
+    final toSetlist = !_showLibrary && _active != null;
+    if (toSetlist) {
+      final item = SetlistItem.song(path: path, title: title);
+      _updateActiveItems([..._active!.items, item]);
+    } else {
+      _load();
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '"$title" added to setlist${result.hasSyncedLyrics ? ' with synced lyrics' : ''}',
+            '"$title" added to ${toSetlist ? 'setlist' : 'your library'}'
+            '${result.hasSyncedLyrics ? ' with synced lyrics' : ''}',
             style: const TextStyle(fontFamily: AppTextStyles.ui, fontSize: 13),
           ),
           duration: const Duration(seconds: 3),
@@ -277,10 +337,8 @@ class _HomeViewState extends State<HomeView> {
       name: name.trim(),
       items: const [],
     );
-    setState(() {
-      _setlists.add(setlist);
-      _activeTab = _setlists.length - 1;
-    });
+    setState(() => _setlists.add(setlist));
+    _showSetlist(_setlists.length - 1);
     _save();
   }
 
@@ -428,10 +486,8 @@ class _HomeViewState extends State<HomeView> {
       destructive: true,
     );
     if (!ok) return;
-    setState(() {
-      _setlists.removeAt(_activeTab);
-      _activeTab = _activeTab.clamp(0, _setlists.length - 1);
-    });
+    setState(() => _setlists.removeAt(_activeTab));
+    _showSetlist(_activeTab.clamp(0, _setlists.length - 1));
     _save();
   }
 
@@ -482,7 +538,7 @@ class _HomeViewState extends State<HomeView> {
       );
       if (!mounted) return;
 
-      if (_active != null) {
+      if (_active != null && !_showLibrary) {
         // Add to current setlist so it shows up as a card
         final item = SetlistItem.song(path: path, title: result.title);
         _updateActiveItems([..._active!.items, item]);
@@ -666,6 +722,7 @@ class _HomeViewState extends State<HomeView> {
 
   @override
   Widget build(BuildContext context) {
+    _lastShowedLibrary = _showLibrary;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: LayoutBuilder(
@@ -705,17 +762,20 @@ class _HomeViewState extends State<HomeView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Text('SETLIST', style: AppTextStyles.eyebrow),
-                            SizedBox(width: 4),
-                            Icon(Icons.expand_more_rounded,
+                            Text(_showLibrary ? 'LIBRARY' : 'SETLIST',
+                                style: AppTextStyles.eyebrow),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.expand_more_rounded,
                                 size: 16, color: AppColors.uiHint),
                           ],
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          (active?.name ?? '').toUpperCase(),
+                          _showLibrary
+                              ? 'ALL SONGS'
+                              : (active?.name ?? '').toUpperCase(),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -737,41 +797,68 @@ class _HomeViewState extends State<HomeView> {
                 onPressed: widget.onOpenSettings,
                 icon: const Icon(Icons.tune_rounded, color: AppColors.uiText),
               ),
-              _setlistMenu(),
+              if (!_showLibrary) _setlistMenu(),
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 2, 20, 16),
-          child: Text(
-            _setlistMeta(songs),
-            style: const TextStyle(fontSize: 14, color: AppColors.uiText),
+        if (_showLibrary) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 2, 20, 12),
+            child: Text(
+              '${_library.length} song${_library.length == 1 ? '' : 's'}',
+              style: const TextStyle(fontSize: 14, color: AppColors.uiText),
+            ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Row(
-            children: [
-              Expanded(child: _addMenu(compact: false, stretch: true)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed:
-                      songs.isEmpty ? null : () => _launchItem(songs.first),
-                  icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                  label: const Text('Start show'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Expanded(child: _librarySearch()),
+                const SizedBox(width: 10),
+                _addMenu(compact: true),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _buildLibraryList(compact: true, phone: true),
+            ),
+          ),
+        ] else ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 2, 20, 16),
+            child: Text(
+              _setlistMeta(songs),
+              style: const TextStyle(fontSize: 14, color: AppColors.uiText),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Expanded(child: _addMenu(compact: false, stretch: true)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        songs.isEmpty ? null : () => _launchItem(songs.first),
+                    icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                    label: const Text('Start show'),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: _buildList(compact: true, phone: true),
+          const SizedBox(height: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _buildList(compact: true, phone: true),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -800,7 +887,7 @@ class _HomeViewState extends State<HomeView> {
                 ListTile(
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
-                  selected: i == _activeTab,
+                  selected: i == _activeTab && !_showLibrary,
                   selectedTileColor: AppColors.surfaceSelected,
                   title: Text(
                     _setlists[i].name,
@@ -835,6 +922,33 @@ class _HomeViewState extends State<HomeView> {
                 ),
                 onTap: () => Navigator.pop(sheetContext, -1),
               ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(12, 16, 12, 8),
+                child: Text('LIBRARY', style: AppTextStyles.eyebrow),
+              ),
+              ListTile(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                selected: _showLibrary,
+                selectedTileColor: AppColors.surfaceSelected,
+                leading: Icon(
+                  Icons.library_music_rounded,
+                  color: _showLibrary ? AppColors.accentText : AppColors.uiText,
+                ),
+                title: const Text(
+                  'All songs',
+                  style: TextStyle(fontSize: 16, color: AppColors.textPrimary),
+                ),
+                trailing: Text(
+                  '${_library.length}',
+                  style: const TextStyle(
+                    fontFamily: AppTextStyles.mono,
+                    fontSize: 13,
+                    color: AppColors.uiMuted,
+                  ),
+                ),
+                onTap: () => Navigator.pop(sheetContext, -2),
+              ),
             ],
           ),
         ),
@@ -843,11 +957,10 @@ class _HomeViewState extends State<HomeView> {
     if (picked == null || !mounted) return;
     if (picked == -1) {
       _addSetlist();
+    } else if (picked == -2) {
+      _openLibrary();
     } else {
-      setState(() {
-        _activeTab = picked;
-        _selectedId = null;
-      });
+      _showSetlist(picked);
     }
   }
 
@@ -887,6 +1000,11 @@ class _HomeViewState extends State<HomeView> {
                   color: AppColors.uiHint,
                   onTap: _addSetlist,
                 ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(12, 22, 12, 10),
+                  child: Text('LIBRARY', style: AppTextStyles.eyebrow),
+                ),
+                _librarySidebarTile(),
               ],
             ),
           ),
@@ -906,9 +1024,66 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
+  Widget _librarySidebarTile() {
+    final selected = _showLibrary;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Material(
+        color: selected ? AppColors.surfaceSelected : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: _openLibrary,
+          child: Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.library_music_rounded,
+                  size: 18,
+                  color: selected ? AppColors.accentText : AppColors.uiText,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'All songs',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: selected
+                          ? AppColors.textPrimary
+                          : AppColors.uiText,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${_library.length}',
+                  style: TextStyle(
+                    fontFamily: AppTextStyles.mono,
+                    fontSize: 12,
+                    color: selected ? AppColors.accentText : AppColors.uiMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openLibrary() {
+    if (_editingId != null) _commitEdit();
+    setState(() {
+      _showLibrary = true;
+      _selectedId = null;
+    });
+  }
+
   Widget _setlistTile(int index) {
     final setlist = _setlists[index];
-    final selected = index == _activeTab;
+    final selected = index == _activeTab && !_showLibrary;
     final songCount = setlist.items.where((i) => i.isSong).length;
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
@@ -919,10 +1094,7 @@ class _HomeViewState extends State<HomeView> {
           borderRadius: BorderRadius.circular(10),
           onTap: () {
             if (_editingId != null) _commitEdit();
-            setState(() {
-              _activeTab = index;
-              _selectedId = null;
-            });
+            _showSetlist(index);
           },
           child: Container(
             height: 40,
@@ -999,6 +1171,28 @@ class _HomeViewState extends State<HomeView> {
     final active = _active;
     final hasItems = active != null && active.items.isNotEmpty;
     final side = compact ? 24.0 : 56.0;
+    if (_showLibrary) {
+      return Focus(
+        focusNode: _listFocus,
+        autofocus: true,
+        onKeyEvent: _onListKey,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(side, compact ? 28 : 40, side, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildLibraryHeader(compact: compact),
+              SizedBox(height: compact ? 16 : 24),
+              _librarySearch(),
+              const SizedBox(height: 8),
+              Expanded(child: _buildLibraryList(compact: compact)),
+              if (_library.isNotEmpty && !compact && !AppPlatform.isTouch)
+                _keyHints(),
+            ],
+          ),
+        ),
+      );
+    }
     return Focus(
       focusNode: _listFocus,
       autofocus: true,
@@ -1064,6 +1258,313 @@ class _HomeViewState extends State<HomeView> {
           label: Text(compact ? 'Start' : 'Start show'),
         ),
       ],
+    );
+  }
+
+  Widget _buildLibraryHeader({required bool compact}) {
+    final inNone = _library.where((s) => _setlistsUsing(s.path) == 0).length;
+    final meta = [
+      '${_library.length} song${_library.length == 1 ? '' : 's'}',
+      if (inNone == 1) '1 not in any setlist',
+      if (inNone > 1) '$inNone not in any setlist',
+    ].join('  ·  ');
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('LIBRARY', style: AppTextStyles.eyebrow),
+              const SizedBox(height: 6),
+              Text(
+                'ALL SONGS',
+                style: TextStyle(
+                  fontFamily: AppTextStyles.display,
+                  fontSize: compact ? 34 : 50,
+                  fontWeight: FontWeight.w700,
+                  height: 1.05,
+                  letterSpacing: 0.5,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                meta,
+                style: const TextStyle(fontSize: 14, color: AppColors.uiText),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 16),
+        _addMenu(compact: compact),
+      ],
+    );
+  }
+
+  Widget _librarySearch() {
+    return Container(
+      height: 42,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: TextField(
+        controller: _libraryFilterCtrl,
+        onChanged: (v) => setState(() => _libraryFilter = v),
+        style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+        decoration: InputDecoration(
+          hintText: 'Search your songs',
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          prefixIcon: const Icon(Icons.search_rounded,
+              size: 18, color: AppColors.uiHint),
+          suffixIcon: _libraryFilter.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Clear',
+                  icon: const Icon(Icons.close_rounded, size: 16),
+                  color: AppColors.uiHint,
+                  onPressed: () {
+                    _libraryFilterCtrl.clear();
+                    setState(() => _libraryFilter = '');
+                  },
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLibraryList({required bool compact, bool phone = false}) {
+    if (_loading) {
+      return const Center(
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.accent,
+          ),
+        ),
+      );
+    }
+    if (_library.isEmpty) return _buildLibraryEmptyState();
+    final songs = _filteredLibrary;
+    if (songs.isEmpty) {
+      return Center(
+        child: Text(
+          'No songs match "$_libraryFilter"',
+          style: const TextStyle(fontSize: 14, color: AppColors.uiHint),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(top: 6, bottom: 24),
+      itemCount: songs.length,
+      itemBuilder: (_, i) {
+        final song = songs[i];
+        final used = _setlistsUsing(song.path);
+        final detail = _songDetails[song.path] ?? '';
+        final where = used == 0
+            ? 'Not in a setlist'
+            : 'In $used setlist${used == 1 ? '' : 's'}';
+        return _LibraryRow(
+          key: GlobalObjectKey(song.path),
+          title: song.title,
+          detail: detail.isEmpty ? where : '$detail  ·  $where',
+          speed: _songSpeeds[song.title],
+          isTimed: _timedSongs.contains(song.title),
+          isSelected: _selectedId == song.path,
+          compact: compact || phone,
+          onSelect: () => _selectPath(song.path),
+          onLaunch: () => _launchLibrarySong(song),
+          onEdit: () => _editLibrarySong(song),
+          onAddToSetlist: () => _addLibrarySongToSetlist(song),
+          onDelete: () => _deleteLibrarySong(song),
+        );
+      },
+    );
+  }
+
+  Widget _buildLibraryEmptyState() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.accentSoft,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.library_music_rounded,
+                size: 30,
+                color: AppColors.accentText,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'Your library is empty',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Every song you write, import or find online is kept here, '
+              'ready for any setlist.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: AppColors.uiText,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _selectPath(String path) {
+    setState(() => _selectedId = path);
+    _listFocus.requestFocus();
+  }
+
+  Future<Script?> _readLibrarySong(({String title, String path}) song) async {
+    final content = await _fileService.readSavedScript(song.path);
+    if (!mounted) return null;
+    if (content == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('File not found — it may have been moved or deleted.'),
+        ),
+      );
+      return null;
+    }
+    return ScriptParser.parse(content, title: song.title);
+  }
+
+  Future<void> _launchLibrarySong(({String title, String path}) song) async {
+    final script = await _readLibrarySong(song);
+    if (script == null || !mounted) return;
+    if (script.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Script is empty — open it to add lyrics first.'),
+        ),
+      );
+      return;
+    }
+    widget.onLaunchScript(script, [song], 0);
+  }
+
+  Future<void> _editLibrarySong(({String title, String path}) song) async {
+    final script = await _readLibrarySong(song);
+    if (script == null) return;
+    widget.onOpenScriptWithSetlist(script, [song], 0);
+  }
+
+  Future<void> _addLibrarySongToSetlist(
+      ({String title, String path}) song) async {
+    if (_setlists.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Create a setlist first, then add songs to it.'),
+        ),
+      );
+      return;
+    }
+    Setlist? target;
+    if (_setlists.length == 1) {
+      target = _setlists.first;
+    } else {
+      target = await showDialog<Setlist>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: const Text('Add to which setlist?'),
+          children: [
+            for (final s in _setlists)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, s),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        s.name,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${s.items.where((i) => i.isSong).length} songs',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.uiHint),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+    if (target == null || !mounted) return;
+    if (target.items.any((i) => i.isSong && samePath(i.path, song.path))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('"${song.title}" is already in ${target.name}.')),
+      );
+      return;
+    }
+    final index = _setlists.indexWhere((s) => s.id == target!.id);
+    final updated = target.copyWith(
+      items: [
+        ...target.items,
+        SetlistItem.song(path: song.path, title: song.title),
+      ],
+    );
+    setState(() => _setlists[index] = updated);
+    await _save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('"${song.title}" added to ${target.name}.')),
+    );
+  }
+
+  Future<void> _deleteLibrarySong(({String title, String path}) song) async {
+    final used = _setlistsUsing(song.path);
+    final ok = await _confirm(
+      'Delete "${song.title}"?',
+      used == 0
+          ? 'The lyrics and everything saved with them are deleted. '
+              'This can\'t be undone.'
+          : 'It\'s also removed from $used setlist${used == 1 ? '' : 's'}. '
+              'The lyrics and everything saved with them are deleted. '
+              'This can\'t be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
+    if (!ok) return;
+    await SongLibrary.delete(title: song.title, path: song.path);
+    if (!mounted) return;
+    setState(() => _selectedId = null);
+    _load();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('"${song.title}" deleted.')),
     );
   }
 
@@ -1180,12 +1681,13 @@ class _HomeViewState extends State<HomeView> {
       constraints: const BoxConstraints(minWidth: 300),
       onSelected: (action) => action(),
       itemBuilder: (_) => [
-        _menuEntry(
-          Icons.library_music_rounded,
-          'Song from library',
-          _showAddSong,
-          subtitle: 'Pick a song you already have',
-        ),
+        if (!_showLibrary)
+          _menuEntry(
+            Icons.library_music_rounded,
+            'Song from library',
+            _showAddSong,
+            subtitle: 'Pick a song you already have',
+          ),
         _menuEntry(
           Icons.search_rounded,
           'Find lyrics online',
@@ -1204,13 +1706,15 @@ class _HomeViewState extends State<HomeView> {
           subtitle: '.txt or .lrc',
           enabled: !_importing,
         ),
-        const PopupMenuDivider(height: 9),
-        _menuEntry(
-          Icons.horizontal_rule_rounded,
-          'Section break',
-          _addSeparator,
-          subtitle: 'Set break, band intro, stage note',
-        ),
+        if (!_showLibrary) ...[
+          const PopupMenuDivider(height: 9),
+          _menuEntry(
+            Icons.horizontal_rule_rounded,
+            'Section break',
+            _addSeparator,
+            subtitle: 'Set break, band intro, stage note',
+          ),
+        ],
       ],
       child: _menuButtonFace(
         icon: Icons.add_rounded,
@@ -1483,25 +1987,35 @@ class _HomeViewState extends State<HomeView> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
-    final songs = _active?.items.where((i) => i.isSong).toList() ?? const [];
-    if (songs.isEmpty) return KeyEventResult.ignored;
-    final current = songs.indexWhere((s) => s.id == _selectedId);
+    // Each row is known by an id: the item's in a setlist, the file's in
+    // the library
+    final List<({String id, VoidCallback launch})> rows = _showLibrary
+        ? [
+            for (final s in _filteredLibrary)
+              (id: s.path, launch: () => _launchLibrarySong(s)),
+          ]
+        : [
+            for (final i in _active?.items ?? const <SetlistItem>[])
+              if (i.isSong) (id: i.id, launch: () => _launchItem(i)),
+          ];
+    if (rows.isEmpty) return KeyEventResult.ignored;
+    final current = rows.indexWhere((r) => r.id == _selectedId);
     final key = event.logicalKey;
 
     int? next;
     if (key == LogicalKeyboardKey.arrowDown) {
-      next = current < 0 ? 0 : (current + 1).clamp(0, songs.length - 1);
+      next = current < 0 ? 0 : (current + 1).clamp(0, rows.length - 1);
     } else if (key == LogicalKeyboardKey.arrowUp) {
       next = current <= 0 ? 0 : current - 1;
     } else if ((key == LogicalKeyboardKey.enter ||
             key == LogicalKeyboardKey.numpadEnter) &&
         current >= 0) {
-      _launchItem(songs[current]);
+      rows[current].launch();
       return KeyEventResult.handled;
     }
     if (next == null) return KeyEventResult.ignored;
 
-    final song = songs[next];
+    final song = rows[next];
     setState(() => _selectedId = song.id);
     final rowContext = GlobalObjectKey(song.id).currentContext;
     if (rowContext != null) {
@@ -2029,6 +2543,235 @@ class _SongRowState extends State<_SongRow> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── Library row ──────────────────────────────────────────────────────────────
+
+class _LibraryRow extends StatefulWidget {
+  final String title;
+  final String detail;
+  final double? speed;
+  final bool isTimed;
+  final bool isSelected;
+  final bool compact;
+  final VoidCallback onSelect;
+  final VoidCallback onLaunch;
+  final VoidCallback onEdit;
+  final VoidCallback onAddToSetlist;
+  final VoidCallback onDelete;
+
+  const _LibraryRow({
+    super.key,
+    required this.title,
+    required this.detail,
+    required this.speed,
+    required this.isTimed,
+    required this.isSelected,
+    required this.compact,
+    required this.onSelect,
+    required this.onLaunch,
+    required this.onEdit,
+    required this.onAddToSetlist,
+    required this.onDelete,
+  });
+
+  @override
+  State<_LibraryRow> createState() => _LibraryRowState();
+}
+
+class _LibraryRowState extends State<_LibraryRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final lit = _hovered || widget.isSelected;
+    final touch = AppPlatform.isTouch;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Listener(
+        onPointerDown: (_) => widget.onSelect(),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          height: 72,
+          margin: const EdgeInsets.only(top: 2),
+          padding: EdgeInsets.only(left: widget.compact ? 12 : 20, right: 12),
+          decoration: BoxDecoration(
+            color: widget.isSelected
+                ? AppColors.surfaceSelected
+                : _hovered
+                ? AppColors.surfaceHover
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.music_note_rounded,
+                size: 18,
+                color: lit ? AppColors.accentText : AppColors.uiMuted,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: widget.onLaunch,
+                      child: Tooltip(
+                        message: touch
+                            ? widget.title
+                            : '${widget.title}\nDouble-click to launch',
+                        waitDuration: const Duration(milliseconds: 700),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      widget.detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.uiHint),
+                    ),
+                  ],
+                ),
+              ),
+              if (!widget.compact) ...[
+                const SizedBox(width: 12),
+                if (widget.isTimed)
+                  _pill('Timed', Icons.graphic_eq_rounded)
+                else if (widget.speed != null)
+                  _pill(ScrollConstants.speedLabel(widget.speed!), null),
+              ],
+              const SizedBox(width: 8),
+              if (!widget.compact && !touch)
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 120),
+                  opacity: _hovered ? 1 : 0,
+                  child: IconButton(
+                    tooltip: 'Edit lyrics',
+                    onPressed: widget.onEdit,
+                    icon: const Icon(Icons.edit_rounded, size: 18),
+                    color: AppColors.uiText,
+                  ),
+                ),
+              AnimatedOpacity(
+                duration: const Duration(milliseconds: 120),
+                opacity: lit || touch ? 1 : 0.45,
+                child: _menu(),
+              ),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: 'Launch',
+                child: Material(
+                  color: lit ? AppColors.accent : AppColors.surfaceElevated,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: widget.onLaunch,
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        size: 22,
+                        color: lit ? AppColors.onAccent : AppColors.uiText,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pill(String label, IconData? icon) {
+    return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: icon != null ? AppColors.accentSoft : AppColors.surfaceSelected,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 14, color: AppColors.accentText),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: icon == null ? AppTextStyles.mono : null,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: icon != null ? AppColors.accentText : AppColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _menu() {
+    PopupMenuItem<VoidCallback> entry(IconData icon, String label,
+        VoidCallback action, {bool danger = false}) {
+      return PopupMenuItem<VoidCallback>(
+        value: action,
+        height: AppPlatform.isTouch ? 48 : 40,
+        child: Row(
+          children: [
+            Icon(icon, size: 18,
+                color: danger ? AppColors.danger : AppColors.uiText),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                color: danger ? AppColors.danger : AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return PopupMenuButton<VoidCallback>(
+      tooltip: 'Song options',
+      position: PopupMenuPosition.under,
+      onSelected: (action) => action(),
+      icon: const Icon(Icons.more_horiz_rounded,
+          size: 20, color: AppColors.uiText),
+      itemBuilder: (_) => [
+        entry(Icons.play_arrow_rounded, 'Launch', widget.onLaunch),
+        entry(Icons.edit_rounded, 'Edit lyrics', widget.onEdit),
+        entry(Icons.playlist_add_rounded, 'Add to setlist…',
+            widget.onAddToSetlist),
+        const PopupMenuDivider(height: 9),
+        entry(Icons.delete_outline_rounded, 'Delete from library',
+            widget.onDelete, danger: true),
+      ],
     );
   }
 }
