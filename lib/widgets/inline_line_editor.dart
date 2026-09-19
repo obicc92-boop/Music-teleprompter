@@ -7,8 +7,9 @@ import 'formatted_text_controller.dart';
 import 'lyrics_format_toolbar.dart';
 
 /// One lyric line edited where it stands on the stage screen, in its stage
-/// font and colours, with the formatting tools underneath. Enter saves,
-/// Esc cancels, Shift+Enter starts a new line.
+/// font and colours, with the formatting tools underneath. Enter, or a tap
+/// anywhere else, keeps the edit; Esc cancels; Shift+Enter starts a new
+/// line.
 class InlineLineEditor extends StatefulWidget {
   final String text;
 
@@ -68,6 +69,20 @@ class _InlineLineEditorState extends State<InlineLineEditor> {
 
   void _save() => widget.onSave(_controller.text, _controller.formatting);
 
+  // Tapping away keeps what was typed, like leaving any other field; an
+  // untouched line is simply closed. Not for taps in a dialog opened from
+  // the toolbar, such as the colour picker.
+  void _onTapOutside(PointerDownEvent _) {
+    if (ModalRoute.of(context)?.isCurrent == false) return;
+    final changed = _controller.text != widget.text ||
+        !_controller.formatting.sameAs(ScriptFormatting(spans: widget.spans));
+    if (changed) {
+      _save();
+    } else {
+      widget.onCancel();
+    }
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
@@ -114,6 +129,7 @@ class _InlineLineEditorState extends State<InlineLineEditor> {
               controller: _controller,
               focusNode: _focus,
               groupId: _tapGroup,
+              onTapOutside: _onTapOutside,
               maxLines: null,
               keyboardType: TextInputType.multiline,
               textAlign: widget.textAlign,
@@ -171,7 +187,7 @@ class _InlineLineEditorState extends State<InlineLineEditor> {
                           const SizedBox(width: 4),
                           ElevatedButton(
                             onPressed: _save,
-                            child: Text(touch ? 'Save' : 'Save (Enter)'),
+                            child: Text(touch ? 'Done' : 'Done (Enter)'),
                           ),
                         ],
                       ),

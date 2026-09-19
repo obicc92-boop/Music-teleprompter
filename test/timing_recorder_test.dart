@@ -86,11 +86,11 @@ void main() {
     await pumpRecorder(tester);
     await press(tester, LogicalKeyboardKey.space);
     await press(tester, LogicalKeyboardKey.space);
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Done'));
     expect(saved, isNull, reason: 'one line gives no pace to continue at');
 
     await press(tester, LogicalKeyboardKey.space);
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Done'));
     expect(saved!.map((t) => t.$1), [1, 2]);
     await finish(tester);
   });

@@ -288,10 +288,10 @@ class TimingRecorderState extends State<TimingRecorder> {
         _button('Cancel', Icons.close_rounded, _cancel, tooltip: 'Esc'),
         const SizedBox(width: 4),
         _started
-            ? _primaryButton('Save', _canSave ? _save : null,
+            ? _primaryButton('Done', _canSave ? _save : null,
                 tooltip: _done
-                    ? 'Save this timing (Enter)'
-                    : 'Save now — untimed lines keep the same pace')
+                    ? 'Keep this timing (Enter)'
+                    : 'Stop here — untimed lines keep the same pace')
             : _primaryButton('Start', _start,
                 tooltip: 'Press when the song starts (Space)'),
       ];

@@ -131,11 +131,11 @@ void main() {
       expect(saved, isEmpty);
     });
 
-    testWidgets('the Save button works for a mouse or a finger',
+    testWidgets('the Done button works for a mouse or a finger',
         (tester) async {
       final (saved, _) = await pump(tester);
-      // Widget tests run as a phone, where the button just says Save
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Save'));
+      // Widget tests run as a phone, where the button just says Done
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Done'));
       await tester.pump();
       expect(saved.single.$1, 'Shine shine shine');
     });

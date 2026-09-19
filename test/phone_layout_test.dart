@@ -159,7 +159,7 @@ void main() {
     await tester.pump();
     expect(find.text('Line 3 of 3'), findsOneWidget);
 
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.text('Done'));
     await tester.pump();
     expect(saved, isNotNull);
     expect(saved!.length, 2);

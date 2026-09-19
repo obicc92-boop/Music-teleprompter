@@ -7,6 +7,7 @@ import 'models/setlist_models.dart';
 import 'models/song_settings.dart';
 import 'models/song_theme.dart';
 import 'services/file_service.dart';
+import 'services/pending_saves.dart';
 import 'services/script_parser.dart';
 import 'services/settings_service.dart';
 import 'services/song_settings_store.dart';
@@ -30,11 +31,22 @@ class MusicTeleprompterApp extends ConsumerStatefulWidget {
 }
 
 class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
-    with WindowListener {
+    with WindowListener, WidgetsBindingObserver {
   @override
   void onWindowClose() async {
-    await _syncEngine.stop();
-    await windowManager.destroy();
+    try {
+      await PendingSaves.flush();
+      await _syncEngine.stop();
+    } finally {
+      await windowManager.destroy();
+    }
+  }
+
+  // Switching apps on a phone, or away from the window on a desktop, is
+  // when an unsaved edit is most likely to be lost
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) PendingSaves.flush();
   }
 
   AppScreen _screen = AppScreen.home;
@@ -67,6 +79,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   void initState() {
     super.initState();
     if (AppPlatform.isDesktop) windowManager.addListener(this);
+    WidgetsBinding.instance.addObserver(this);
     _syncEngine.addListener(_onSyncEngineChanged);
     _loadSettings();
   }
@@ -74,6 +87,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
   @override
   void dispose() {
     if (AppPlatform.isDesktop) windowManager.removeListener(this);
+    WidgetsBinding.instance.removeObserver(this);
     _syncEngine.removeListener(_onSyncEngineChanged);
     _syncEngine.dispose();
     super.dispose();

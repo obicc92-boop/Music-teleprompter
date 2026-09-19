@@ -8,11 +8,13 @@ import '../models/setlist_models.dart';
 import '../services/formatting_service.dart';
 import '../services/script_parser.dart';
 import '../services/file_service.dart';
+import '../services/pending_saves.dart';
 import '../services/setlist_service.dart';
 import '../services/song_library.dart';
 import '../utils/app_platform.dart';
 import '../utils/back_dispatcher.dart';
 import '../utils/constants.dart';
+import '../utils/same_path.dart';
 import '../widgets/formatted_text.dart';
 import '../widgets/formatted_text_controller.dart';
 import '../widgets/lyrics_format_toolbar.dart';
@@ -58,26 +60,62 @@ class _EditorViewState extends State<EditorView> {
   ScriptFormatting _lastFormatting = ScriptFormatting.empty;
   Script _previewScript = Script.empty();
   String _currentTitle = 'Untitled';
-  Timer? _autosaveTimer;
   Timer? _parseDebounce;
-  bool _isDirty = false;
   bool _showPreview = false; // phones show lyrics or preview, not both
 
+  // Everything is saved by itself, a moment after it changes. What's on
+  // disk is remembered so only real changes are written.
+  Timer? _saveDebounce;
+  Future<String?>? _saveInFlight;
+  bool _saveAgain = false; // changed while a save was running
+  Object? _saveError;
+  String _savedText = '';
+  ScriptFormatting _savedFormatting = ScriptFormatting.empty;
+  String? _savedPath;
+
   // Title of the library song this editor saves to; null until a new
-  // script is saved for the first time.
+  // script is saved for the first time. The title as typed may differ from
+  // it when another song already had that name ("Lalala" → "Lalala 2").
   String? _savedTitle;
+  String? _savedTypedTitle;
+
+  // How the song was when it was opened, for Revert
+  late final String _openedText;
+  late final String _openedTitle;
+  ScriptFormatting _openedFormatting = ScriptFormatting.empty;
 
   static const _defaultTitle = 'Untitled';
+  static const _saveAfterTyping = Duration(seconds: 1);
+  // A new title renames the song everywhere, so it waits a little longer
+  static const _saveAfterTitle = Duration(seconds: 2);
+
+  bool get _isDirty =>
+      _textController.text != _savedText ||
+      !identical(_textController.formatting, _savedFormatting) ||
+      _currentTitle.trim() != (_savedTypedTitle ?? _currentTitle.trim());
+
+  bool get _changedSinceOpened =>
+      _textController.text != _openedText ||
+      _currentTitle.trim() != _openedTitle ||
+      !_textController.formatting.sameAs(_openedFormatting);
 
   @override
   void initState() {
     super.initState();
     _fileService = FileService();
     _currentTitle = widget.initialScript.title;
-    if (widget.isLibrarySong) _savedTitle = _currentTitle;
+    if (widget.isLibrarySong) {
+      _savedTitle = _currentTitle;
+      _savedTypedTitle = _currentTitle;
+      _savedText = widget.initialScript.rawText;
+    }
+    _openedText = widget.initialScript.rawText;
+    _openedTitle = _currentTitle;
     _textController = FormattedTextController(
       text: widget.initialScript.rawText,
     );
+    _savedFormatting = _textController.formatting;
+    _openedFormatting = _textController.formatting;
     _lastText = widget.initialScript.rawText;
     _titleController = TextEditingController(text: _currentTitle);
     _previewScript = widget.initialScript;
@@ -95,7 +133,8 @@ class _EditorViewState extends State<EditorView> {
       });
     }
 
-    _scheduleAutosave();
+    _titleFocus.addListener(_onTitleFocusChanged);
+    PendingSaves.register(_flushPending);
     widget.backDispatcher?.register(_goHome);
   }
 
@@ -104,7 +143,8 @@ class _EditorViewState extends State<EditorView> {
   @override
   void dispose() {
     widget.backDispatcher?.unregister(_goHome);
-    _autosaveTimer?.cancel();
+    PendingSaves.unregister(_flushPending);
+    _saveDebounce?.cancel();
     _parseDebounce?.cancel();
     _textController.dispose();
     _titleController.dispose();
@@ -118,6 +158,8 @@ class _EditorViewState extends State<EditorView> {
     if (!mounted || loaded.isEmpty) return;
     final formatting = loaded.upgraded(widget.initialScript);
     _lastFormatting = formatting;
+    _savedFormatting = formatting;
+    _openedFormatting = formatting;
     _textController.formatting = formatting;
     setState(() {});
   }
@@ -135,7 +177,8 @@ class _EditorViewState extends State<EditorView> {
       setState(() {}); // the toolbar follows the selection
       return;
     }
-    setState(() => _isDirty = true);
+    setState(() => _saveError = null);
+    _scheduleSave(_saveAfterTyping);
     if (textChanged) {
       _parseDebounce?.cancel();
       _parseDebounce = Timer(const Duration(milliseconds: 400), _reparseScript);
@@ -150,73 +193,192 @@ class _EditorViewState extends State<EditorView> {
     if (mounted) setState(() => _previewScript = parsed);
   }
 
-  void _scheduleAutosave() {
-    _autosaveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      // Not while the title is being typed, so a half-typed title isn't saved
-      if (_isDirty && !_titleFocus.hasFocus) _save();
-    });
+  void _scheduleSave(Duration after) {
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(after, _autosave);
+  }
+
+  // A new title takes effect once the field is left, or after a pause
+  void _onTitleFocusChanged() {
+    if (!mounted) return;
+    setState(() {}); // the field's border follows focus
+    if (_titleFocus.hasFocus) return;
+    if (_isDirty) {
+      _autosave();
+    } else if (_savedTitle != null && _currentTitle.trim() != _savedTitle) {
+      // The name was taken, so the song was saved as "Title 2"
+      _setTitleField(_savedTitle!);
+    }
+  }
+
+  void _setTitleField(String title) {
+    _titleController.text = title;
+    _currentTitle = title;
+    _savedTypedTitle = title;
+  }
+
+  /// Saves whatever changed. One save runs at a time; a change made while
+  /// one is running is saved right after it.
+  Future<void> _autosave() async {
+    _saveDebounce?.cancel();
+    if (_saveInFlight != null) {
+      _saveAgain = true;
+      return;
+    }
+    if (!_isDirty) return;
+    final save = _save();
+    _saveInFlight = save;
+    try {
+      await save;
+    } finally {
+      _saveInFlight = null;
+    }
+    if (_saveAgain) {
+      _saveAgain = false;
+      if (mounted && _isDirty) _scheduleSave(_saveAfterTyping);
+    }
+  }
+
+  /// Everything typed so far is on disk when this completes. Returns the
+  /// song's file, or null when there are no lyrics to save.
+  Future<String?> _flushPending() async {
+    _saveDebounce?.cancel();
+    while (_saveInFlight != null) {
+      await _saveInFlight;
+    }
+    if (!_isDirty) return _savedPath;
+    final save = _save();
+    _saveInFlight = save;
+    try {
+      return await save;
+    } finally {
+      _saveInFlight = null;
+    }
   }
 
   /// Saves the lyrics to the song in the library and returns its file path,
   /// or null when there is nothing to save. A new song, or one given a new
   /// title, never overwrites a different song with the same name.
   Future<String?> _save() async {
-    if (_textController.text.trim().isEmpty) return null;
-    var title = _currentTitle.trim().isEmpty
+    final text = _textController.text;
+    final formatting = _textController.formatting;
+    if (text.trim().isEmpty) return null;
+    final typed = _currentTitle.trim().isEmpty
         ? _defaultTitle
         : _currentTitle.trim();
     final previous = _savedTitle;
-    if (title != previous) {
-      title = await _fileService.uniqueLibraryTitle(title, keeping: previous);
+    var title = typed;
+    if (mounted) setState(() => _saveError = null);
+    try {
+      if (title != previous) {
+        title = await _fileService.uniqueLibraryTitle(title, keeping: previous);
+      }
+      final String path;
+      if (previous != null && title != previous) {
+        // A rename: the song's settings and its setlist entries follow it,
+        // instead of a second song appearing under the new name
+        path = await SongLibrary.rename(
+          from: previous,
+          to: title,
+          content: text,
+        );
+        widget.onSongRenamed?.call(previous, title, path);
+      } else {
+        path = await _fileService.saveToLibrary(text, title);
+      }
+      await _formattingService.save(title, formatting);
+      _savedTitle = title;
+      _savedPath = path;
+      _savedText = text;
+      _savedFormatting = formatting;
+      _savedTypedTitle = typed;
+      if (mounted) {
+        // A title made unique shows in the field, unless it's being typed in
+        if (title != typed && !_titleFocus.hasFocus) _setTitleField(title);
+        setState(() {});
+      }
+      return path;
+    } catch (e) {
+      if (mounted) setState(() => _saveError = e);
+      return null;
     }
-    final String path;
-    if (previous != null && title != previous) {
-      // A rename: the song's settings and its setlist entries follow it,
-      // instead of a second song appearing under the new name
-      path = await SongLibrary.rename(
-        from: previous,
-        to: title,
-        content: _textController.text,
-      );
-      widget.onSongRenamed?.call(previous, title, path);
-    } else {
-      path = await _fileService.saveToLibrary(_textController.text, title);
-    }
-    await _formattingService.save(title, _textController.formatting);
-    _savedTitle = title;
-    if (mounted) {
-      if (title != _currentTitle) _titleController.text = title;
-      setState(() {
-        _currentTitle = title;
-        _isDirty = false;
-      });
-    }
-    return path;
   }
 
-  void _showSnack(String message, [ScaffoldMessengerState? messenger]) {
-    (messenger ?? ScaffoldMessenger.of(context)).showSnackBar(
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 
-  Future<void> _saveNow() async {
-    final saved = await _save() != null;
-    if (!mounted) return;
-    _showSnack(
-      saved
-          ? 'Saved "$_currentTitle".'
-          : 'Nothing to save — add some lyrics first.',
-    );
+  // Leaving never drops edits: anything not yet written is saved first.
+  Future<void> _goHome() async {
+    await _flushPending();
+    widget.onBack();
   }
 
-  // Leaving never drops edits: unsaved changes are saved first.
-  Future<void> _goHome() async {
-    final messenger = ScaffoldMessenger.of(context);
-    if (_isDirty && await _save() != null) {
-      _showSnack('Saved "$_currentTitle".', messenger);
+  /// Puts the song back as it was when the editor was opened.
+  Future<void> _revert() async {
+    final blank = _openedText.trim().isEmpty;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          blank ? 'Throw this song away?' : 'Go back to how it was?',
+        ),
+        content: Text(
+          blank
+              ? 'Everything written here since you started is removed, '
+                    'and the song leaves your library.'
+              : 'Every change made since you opened "$_openedTitle" is '
+                    'undone, including the title.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep editing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.danger,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(blank ? 'Throw away' : 'Go back'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    _saveDebounce?.cancel();
+    while (_saveInFlight != null) {
+      await _saveInFlight;
     }
-    widget.onBack();
+    _titleController.text = _openedTitle;
+    _currentTitle = _openedTitle;
+    _lastText = _openedText;
+    _lastFormatting = _openedFormatting;
+    _textController.value = TextEditingValue(
+      text: _openedText,
+      selection: TextSelection.collapsed(offset: _openedText.length),
+    );
+    _textController.formatting = _openedFormatting;
+    _reparseScript();
+    if (blank) {
+      // A song that started empty goes away again
+      final title = _savedTitle;
+      final path = _savedPath;
+      if (title != null && path != null) {
+        await SongLibrary.delete(title: title, path: path);
+      }
+      _savedTitle = null;
+      _savedTypedTitle = null;
+      _savedPath = null;
+      _savedText = '';
+      _savedFormatting = _textController.formatting;
+      if (mounted) setState(() {});
+      return;
+    }
+    await _flushPending();
   }
 
   Future<void> _openFile() async {
@@ -226,10 +388,10 @@ class _EditorViewState extends State<EditorView> {
       _currentTitle = result.title;
       _textController.text = result.content;
       _textController.formatting = ScriptFormatting.empty;
-      _isDirty = true; // becomes a song in the library when saved
     });
     _titleController.text = result.title;
     _reparseScript();
+    _scheduleSave(_saveAfterTyping); // becomes a song in the library
   }
 
   Future<void> _exportFile() async {
@@ -237,7 +399,7 @@ class _EditorViewState extends State<EditorView> {
   }
 
   Future<void> _addToSetlist() async {
-    final path = await _save();
+    final path = await _flushPending();
     if (!mounted) return;
     if (path == null) {
       _showSnack('Nothing to save — add some lyrics first.');
@@ -273,7 +435,8 @@ class _EditorViewState extends State<EditorView> {
     }
 
     // Skip if already in the setlist (same path)
-    final alreadyIn = target.items.any((i) => i.isSong && i.path == path);
+    final alreadyIn =
+        target.items.any((i) => i.isSong && samePath(i.path, path));
     if (!alreadyIn) {
       final item = SetlistItem.song(path: path, title: _currentTitle);
       final updated = target.copyWith(items: [...target.items, item]);
@@ -305,7 +468,7 @@ class _EditorViewState extends State<EditorView> {
       );
       return;
     }
-    await _save();
+    await _flushPending();
     if (!mounted) return;
     // Parsed after saving, which may have given a new song a unique title
     widget.onLaunchTeleprompter(
@@ -353,7 +516,7 @@ class _EditorViewState extends State<EditorView> {
           Row(
             children: [
               IconButton(
-                tooltip: 'Back — changes are saved',
+                tooltip: 'Back — everything is saved',
                 onPressed: _goHome,
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
@@ -394,19 +557,8 @@ class _EditorViewState extends State<EditorView> {
                 ),
               ),
               const Spacer(),
-              IconButton(
-                tooltip: _isDirty ? 'Save — unsaved changes' : 'Saved',
-                onPressed: _saveNow,
-                icon: Badge(
-                  isLabelVisible: _isDirty,
-                  smallSize: 7,
-                  backgroundColor: AppColors.accent,
-                  child: const Icon(
-                    Icons.save_rounded,
-                    color: AppColors.uiText,
-                  ),
-                ),
-              ),
+              _saveStatus(),
+              const SizedBox(width: 4),
               PopupMenuButton<VoidCallback>(
                 tooltip: 'More',
                 onSelected: (action) => action(),
@@ -430,6 +582,12 @@ class _EditorViewState extends State<EditorView> {
                     'Save a copy as a file',
                     _exportFile,
                   ),
+                  if (_changedSinceOpened)
+                    _phoneMenuItem(
+                      Icons.history_rounded,
+                      'Go back to how it was',
+                      _revert,
+                    ),
                 ],
               ),
             ],
@@ -475,7 +633,7 @@ class _EditorViewState extends State<EditorView> {
                 compact: compact,
                 icon: Icons.arrow_back_rounded,
                 label: 'Home',
-                tooltip: 'Back to setlists — unsaved changes are saved',
+                tooltip: 'Back to setlists — everything is saved',
                 onTap: _goHome,
               ),
               const SizedBox(width: 8),
@@ -485,17 +643,6 @@ class _EditorViewState extends State<EditorView> {
                 label: 'Open',
                 tooltip: 'Open a lyrics file from disk',
                 onTap: _openFile,
-              ),
-              const SizedBox(width: 8),
-              _toolbarButton(
-                compact: compact,
-                icon: Icons.save_rounded,
-                label: _isDirty ? 'Save*' : 'Save',
-                showDot: _isDirty,
-                tooltip: _isDirty
-                    ? 'Unsaved changes — also saved automatically'
-                    : 'Saved to your song library',
-                onTap: _saveNow,
               ),
               const SizedBox(width: 8),
               _toolbarButton(
@@ -510,12 +657,24 @@ class _EditorViewState extends State<EditorView> {
                 compact: compact,
                 icon: Icons.library_add_rounded,
                 label: 'Add to Setlist',
-                tooltip: 'Save and add this song to a setlist',
+                tooltip: 'Add this song to a setlist',
                 onTap: _addToSetlist,
               ),
+              if (_changedSinceOpened) ...[
+                const SizedBox(width: 8),
+                _toolbarButton(
+                  compact: compact,
+                  icon: Icons.history_rounded,
+                  label: 'Revert',
+                  tooltip: 'Go back to how the song was when you opened it',
+                  onTap: _revert,
+                ),
+              ],
               const SizedBox(width: 16),
               Expanded(child: _titleField()),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
+              _saveStatus(),
+              const SizedBox(width: 12),
               _launchButton(),
             ],
           );
@@ -573,10 +732,10 @@ class _EditorViewState extends State<EditorView> {
                   color: AppColors.textPrimary,
                 ),
                 // A new title is a change to save, like new words
-                onChanged: (v) => setState(() {
-                  _currentTitle = v;
-                  if (v.trim() != (_savedTitle ?? '')) _isDirty = true;
-                }),
+                onChanged: (v) {
+                  setState(() => _currentTitle = v);
+                  _scheduleSave(_saveAfterTitle);
+                },
               ),
             ),
           ],
@@ -785,6 +944,58 @@ class _EditorViewState extends State<EditorView> {
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
+      ),
+    );
+  }
+
+  /// "Saved", "Saving…", or what went wrong: the word that replaces a
+  /// Save button, so it's clear nothing needs pressing.
+  Widget _saveStatus() {
+    final error = _saveError;
+    final nothingYet =
+        _savedPath == null && _textController.text.trim().isEmpty;
+    final IconData icon;
+    final String label;
+    final String tooltip;
+    final Color color;
+    if (error != null) {
+      icon = Icons.error_outline_rounded;
+      label = 'Not saved';
+      tooltip = "Couldn't save: $error\nIt's tried again with the next change.";
+      color = AppColors.danger;
+    } else if (nothingYet) {
+      icon = Icons.edit_note_rounded;
+      label = 'Saves as you type';
+      tooltip = 'The song joins your library with the first words';
+      color = AppColors.uiMuted;
+    } else if (_saveInFlight != null || _isDirty) {
+      icon = Icons.sync_rounded;
+      label = 'Saving…';
+      tooltip = 'Changes are saved a moment after you stop typing';
+      color = AppColors.uiHint;
+    } else {
+      icon = Icons.check_rounded;
+      label = 'Saved';
+      tooltip = "Everything is saved to your library — there's nothing to press";
+      color = AppColors.uiHint;
+    }
+    return Tooltip(
+      message: tooltip,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: AppTextStyles.ui,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
       ),
     );
   }

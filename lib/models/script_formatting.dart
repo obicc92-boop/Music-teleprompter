@@ -27,6 +27,9 @@ class FormatSpan {
       fontSizeScale == other.fontSizeScale &&
       bold == other.bold;
 
+  bool sameAs(FormatSpan other) =>
+      start == other.start && end == other.end && sameLook(other);
+
   FormatSpan copyWith({
     int? start,
     int? end,
@@ -97,6 +100,16 @@ class ScriptFormatting {
   const ScriptFormatting({this.spans = const [], this.legacy = const []});
 
   static const empty = ScriptFormatting();
+
+  /// The same runs with the same looks, however they were arrived at.
+  bool sameAs(ScriptFormatting other) {
+    if (identical(this, other)) return true;
+    if (spans.length != other.spans.length) return false;
+    for (var i = 0; i < spans.length; i++) {
+      if (!spans[i].sameAs(other.spans[i])) return false;
+    }
+    return true;
+  }
 
   bool get isEmpty => spans.isEmpty && legacy.isEmpty;
 

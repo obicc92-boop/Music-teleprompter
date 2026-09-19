@@ -22,6 +22,9 @@ void main() async {
     );
 
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      // Closing goes through the app, so words typed a moment ago are
+      // saved first (see onWindowClose)
+      await windowManager.setPreventClose(true);
       await windowManager.show();
       await windowManager.focus();
     });
