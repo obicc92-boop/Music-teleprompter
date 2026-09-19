@@ -46,6 +46,32 @@ class SetlistService {
         .writeAsString(jsonEncode(setlists.map((s) => s.toJson()).toList()));
   }
 
+  /// Every setlist entry for a renamed song points at its new name and file.
+  Future<void> songRenamed({
+    required String oldPath,
+    required String oldTitle,
+    required String newPath,
+    required String newTitle,
+  }) async {
+    final setlists = await load();
+    var changed = false;
+    final updated = [
+      for (final s in setlists)
+        s.copyWith(items: [
+          for (final item in s.items)
+            if (item.isSong &&
+                (item.path == oldPath || item.title == oldTitle))
+              () {
+                changed = true;
+                return item.copyWith(path: newPath, title: newTitle);
+              }()
+            else
+              item,
+        ]),
+    ];
+    if (changed) await save(updated);
+  }
+
   /// Speed used to be set per setlist card; it now belongs to the song, so it
   /// follows the song into every setlist. A song's own speed wins over a card's.
   Future<List<Setlist>> _moveCardSpeedsToSongs(List<Setlist> setlists) async {

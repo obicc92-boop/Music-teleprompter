@@ -85,16 +85,24 @@ class FileService {
 
   /// [title], or "title 2", "title 3"… if a song with that name is already
   /// in the library, so saving a new song never overwrites another one.
-  Future<String> uniqueLibraryTitle(String title) async {
+  /// A song being renamed passes its own title as [keeping]: its own file
+  /// doesn't count as taken.
+  Future<String> uniqueLibraryTitle(String title, {String? keeping}) async {
     final dir = await getScriptsDirectory();
+    final own = keeping == null ? null : _libraryFile(dir, keeping).path;
     var candidate = title;
     var n = 2;
-    while (await _libraryFile(dir, candidate).exists()) {
+    while (true) {
+      final file = _libraryFile(dir, candidate);
+      if (file.path == own || !await file.exists()) return candidate;
       candidate = '$title $n';
       n++;
     }
-    return candidate;
   }
+
+  /// Where the song called [title] lives in the library.
+  Future<String> libraryPath(String title) async =>
+      _libraryFile(await getScriptsDirectory(), title).path;
 
   File _libraryFile(Directory dir, String title) {
     final safe = title.replaceAll(RegExp(r'[^\w\s\-]'), '').trim();

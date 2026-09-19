@@ -9,6 +9,7 @@ import '../services/formatting_service.dart';
 import '../services/script_parser.dart';
 import '../services/file_service.dart';
 import '../services/setlist_service.dart';
+import '../services/song_library.dart';
 import '../utils/app_platform.dart';
 import '../utils/back_dispatcher.dart';
 import '../utils/constants.dart';
@@ -27,6 +28,10 @@ class EditorView extends StatefulWidget {
   /// Where Android's back gesture is sent while the editor is open.
   final BackDispatcher? backDispatcher;
 
+  /// The song was given a new title; setlists on disk already follow it,
+  /// this lets the owner update the copy it holds in memory.
+  final void Function(String from, String to, String path)? onSongRenamed;
+
   const EditorView({
     super.key,
     required this.initialScript,
@@ -34,6 +39,7 @@ class EditorView extends StatefulWidget {
     required this.onBack,
     this.isLibrarySong = false,
     this.backDispatcher,
+    this.onSongRenamed,
   });
 
   @override
@@ -159,10 +165,23 @@ class _EditorViewState extends State<EditorView> {
     var title = _currentTitle.trim().isEmpty
         ? _defaultTitle
         : _currentTitle.trim();
-    if (title != _savedTitle) {
-      title = await _fileService.uniqueLibraryTitle(title);
+    final previous = _savedTitle;
+    if (title != previous) {
+      title = await _fileService.uniqueLibraryTitle(title, keeping: previous);
     }
-    final path = await _fileService.saveToLibrary(_textController.text, title);
+    final String path;
+    if (previous != null && title != previous) {
+      // A rename: the song's settings and its setlist entries follow it,
+      // instead of a second song appearing under the new name
+      path = await SongLibrary.rename(
+        from: previous,
+        to: title,
+        content: _textController.text,
+      );
+      widget.onSongRenamed?.call(previous, title, path);
+    } else {
+      path = await _fileService.saveToLibrary(_textController.text, title);
+    }
     await _formattingService.save(title, _textController.formatting);
     _savedTitle = title;
     if (mounted) {
@@ -553,7 +572,11 @@ class _EditorViewState extends State<EditorView> {
                   fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
                 ),
-                onChanged: (v) => setState(() => _currentTitle = v),
+                // A new title is a change to save, like new words
+                onChanged: (v) => setState(() {
+                  _currentTitle = v;
+                  if (v.trim() != (_savedTitle ?? '')) _isDirty = true;
+                }),
               ),
             ),
           ],

@@ -31,6 +31,16 @@ class FormattingService {
     } catch (_) {}
   }
 
+  /// The formatting follows a song that was renamed.
+  Future<void> rename(String from, String to) async {
+    try {
+      final old = await _file(from);
+      final fresh = await _file(to);
+      if (old.path == fresh.path || !await old.exists()) return;
+      await old.rename(fresh.path);
+    } catch (_) {}
+  }
+
   Future<void> delete(String scriptTitle) async {
     try {
       final file = await _file(scriptTitle);

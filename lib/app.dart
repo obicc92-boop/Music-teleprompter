@@ -57,6 +57,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
 
   List<SetlistEntry> _editorSetlist = [];
   int _editorSetlistIndex = 0;
+  bool _editorLibrarySong = false; // the editor saves over an existing song
 
   final SyncEngine _syncEngine = SyncEngine();
   final FileService _fileService = FileService();
@@ -162,6 +163,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
       _activeScript = script;
       _editorSetlist = [];
       _editorSetlistIndex = 0;
+      _editorLibrarySong = false;
       _screen = AppScreen.editor;
     });
   }
@@ -172,6 +174,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
       _activeScript = script;
       _editorSetlist = setlist;
       _editorSetlistIndex = index;
+      _editorLibrarySong = true;
       _screen = AppScreen.editor;
     });
   }
@@ -216,6 +219,18 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
 
   int _homeEpoch = 0;
 
+  // The setlist copies held for Next/Previous follow a renamed song
+  void _onSongRenamed(String from, String to, String path) {
+    List<SetlistEntry> follow(List<SetlistEntry> entries) => [
+          for (final e in entries)
+            e.title == from ? (path: path, title: to) : e,
+        ];
+    setState(() {
+      _editorSetlist = follow(_editorSetlist);
+      _setlist = follow(_setlist);
+    });
+  }
+
   void _backToHome() {
     setState(() {
       _screen = AppScreen.home;
@@ -245,6 +260,7 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
     setState(() {
       _editorSetlist = _setlist;
       _editorSetlistIndex = _setlistIndex;
+      _editorLibrarySong = true; // a song on stage was saved when launched
       _screen = AppScreen.editor;
     });
   }
@@ -367,8 +383,9 @@ class _MusicTeleprompterAppState extends ConsumerState<MusicTeleprompterApp>
           initialScript: _activeScript,
           onLaunchTeleprompter: _launchTeleprompter,
           onBack: _backToHome,
-          isLibrarySong: _editorSetlist.isNotEmpty,
+          isLibrarySong: _editorLibrarySong,
           backDispatcher: _back,
+          onSongRenamed: _onSongRenamed,
         );
       case AppScreen.teleprompter:
         return TeleprompterView(

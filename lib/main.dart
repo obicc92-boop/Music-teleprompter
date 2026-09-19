@@ -24,9 +24,6 @@ void main() async {
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
-      // The whole screen from the start; the size above is the fallback
-      // when the window is restored
-      await windowManager.maximize();
     });
   } else {
     // Draw behind the status and navigation bars, which stay light-on-dark
@@ -45,4 +42,21 @@ void main() async {
       child: MusicTeleprompterApp(),
     ),
   );
+
+  // The whole screen from the start; the size above is what the window
+  // goes back to when it's restored. The request is a posted message that
+  // the window sometimes misses while it's still coming up, so it's asked
+  // again until it took.
+  if (AppPlatform.isDesktop) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maximizeWhenReady());
+  }
+}
+
+Future<void> _maximizeWhenReady() async {
+  // Keeps nudging for the first few seconds: start-up work can still
+  // restore the window after the first request took
+  for (var tick = 0; tick < 12; tick++) {
+    if (!await windowManager.isMaximized()) await windowManager.maximize();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
 }
