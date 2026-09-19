@@ -146,6 +146,13 @@ class _TeleprompterViewState extends State<TeleprompterView>
 
   final _formattingService = FormattingService();
   int? _editingLine; // a line being edited where it stands
+  // Double-click, long-press and finger drags are read straight from the
+  // pointer events: gesture recognisers on the lyrics broke trackpad scrolling
+  DateTime? _lastClickTime;
+  Offset? _lastClickPosition;
+  Offset? _touchStart;
+  bool _touchDragging = false;
+  Timer? _longPressTimer;
   bool _timingFromContent = false; // timing the app itself keeps for the song
 
   @override
@@ -275,6 +282,7 @@ class _TeleprompterViewState extends State<TeleprompterView>
     final midSong = line > 0 && line < _script.totalLines - 1;
     widget.onLeave?.call(_script.title, midSong ? line : null);
     widget.backDispatcher?.unregister(_handleEscape);
+    _longPressTimer?.cancel();
     _noticeTimer?.cancel();
     _keyboardFocus.dispose();
     _ScreenAwake.release();
@@ -377,6 +385,74 @@ class _TeleprompterViewState extends State<TeleprompterView>
         _isFullscreen = true;
       });
     }
+  }
+
+  // ── Pointer events on the lyrics ─────────────────────────────────────────
+
+  /// The line under a point on screen, or null when there is none.
+  int? _lineAtY(double y) {
+    if (_script.isEmpty) return null;
+    final anchorY =
+        MediaQuery.sizeOf(context).height * _settings.activeLineYOffset;
+    final i = ((y - anchorY + _scrollEngine.pixelOffset) / _effectiveLineHeight)
+        .floor();
+    return i >= 0 && i < _script.totalLines ? i : null;
+  }
+
+  // The bar and the buttons above it are the controls' own
+  bool _onControls(Offset p) =>
+      p.dy > MediaQuery.sizeOf(context).height - AppDimensions.controlsHeight - 72;
+
+  bool get _lyricsTakePointer =>
+      _editingLine == null && !_recordingTiming;
+
+  void _onPointerDown(PointerDownEvent e) {
+    if (!_lyricsTakePointer || _onControls(e.localPosition)) return;
+    final touch = e.kind == PointerDeviceKind.touch ||
+        e.kind == PointerDeviceKind.stylus;
+    if (touch) {
+      _touchStart = e.localPosition;
+      _touchDragging = false;
+      _longPressTimer?.cancel();
+      final line = _lineAtY(e.localPosition.dy);
+      _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+        if (!_touchDragging && line != null && mounted) _beginEditLine(line);
+      });
+      return;
+    }
+    // A double-click: two clicks close together in time and place
+    final last = _lastClickTime;
+    final lastAt = _lastClickPosition;
+    final now = DateTime.now();
+    if (last != null &&
+        lastAt != null &&
+        now.difference(last) < const Duration(milliseconds: 400) &&
+        (e.localPosition - lastAt).distance < 24) {
+      _lastClickTime = null;
+      final line = _lineAtY(e.localPosition.dy);
+      if (line != null) _beginEditLine(line);
+      return;
+    }
+    _lastClickTime = now;
+    _lastClickPosition = e.localPosition;
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    final start = _touchStart;
+    if (start == null || !e.down) return;
+    if (!_touchDragging) {
+      if ((e.localPosition - start).distance < 8) return;
+      _touchDragging = true;
+      _longPressTimer?.cancel();
+    }
+    // A finger drags the lyrics along with it
+    _scrollEngine.scrollByPixels(-e.delta.dy);
+  }
+
+  void _onPointerUp(PointerEvent e) {
+    _longPressTimer?.cancel();
+    _touchStart = null;
+    _touchDragging = false;
   }
 
   // ── Editing a line where it stands ────────────────────────────────────────
@@ -843,20 +919,15 @@ class _TeleprompterViewState extends State<TeleprompterView>
             // panDelta.dy is positive when swiping down (scroll up), so negate.
             _scrollEngine.scrollByPixels(-event.panDelta.dy);
           },
+          onPointerDown: _onPointerDown,
+          onPointerMove: _onPointerMove,
+          onPointerUp: _onPointerUp,
+          onPointerCancel: _onPointerUp,
           child: Stack(
             children: [
-              // A finger drags the lyrics; mice and trackpads scroll above
-              GestureDetector(
-                supportedDevices: const {
-                  PointerDeviceKind.touch,
-                  PointerDeviceKind.stylus,
-                },
-                onVerticalDragUpdate: (d) =>
-                    _scrollEngine.scrollByPixels(-d.delta.dy),
-                child: MirrorTransform(
-                  enabled: _isMirrored,
-                  child: _buildCanvas(),
-                ),
+              MirrorTransform(
+                enabled: _isMirrored,
+                child: _buildCanvas(),
               ),
               // Lyrics fade out before they reach the controls bar
               Positioned(
@@ -1094,24 +1165,17 @@ class _TeleprompterViewState extends State<TeleprompterView>
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.center,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onDoubleTap: () => _beginEditLine(i),
-                  onLongPress: AppPlatform.isTouch
-                      ? () => _beginEditLine(i)
-                      : null,
-                  child: ScriptLineWidget(
-                    line: lines[i],
-                    proximity: proximity,
-                    fontSize: _settings.fontSize,
-                    isLoopBoundary: isLoopBoundary,
-                    displayFont: _settings.displayFont,
-                    spans: _formatting.forLine(lines[i]),
-                    activeWordIndex: activeWordIndex,
-                    textAlignLeft: _settings.textAlignLeft,
-                    showHighlight: _settings.showActiveLineHighlight,
-                    theme: _songTheme,
-                  ),
+                child: ScriptLineWidget(
+                  line: lines[i],
+                  proximity: proximity,
+                  fontSize: _settings.fontSize,
+                  isLoopBoundary: isLoopBoundary,
+                  displayFont: _settings.displayFont,
+                  spans: _formatting.forLine(lines[i]),
+                  activeWordIndex: activeWordIndex,
+                  textAlignLeft: _settings.textAlignLeft,
+                  showHighlight: _settings.showActiveLineHighlight,
+                  theme: _songTheme,
                 ),
               ),
             );

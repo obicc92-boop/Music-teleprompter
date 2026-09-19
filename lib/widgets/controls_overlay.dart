@@ -164,9 +164,6 @@ class _ControlsOverlayState extends State<ControlsOverlay>
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      // Not opaque: the lyrics underneath must still get double-clicks and
-      // finger drags
-      opaque: false,
       onHover: (_) => _show(),
       // A Listener, not a tap gesture: a gesture here would win every click
       // over the lyrics beneath (a line being edited, a word double-clicked)
