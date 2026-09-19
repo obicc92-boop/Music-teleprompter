@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import '../utils/app_platform.dart';
+import 'script_parser.dart';
 
 class FileService {
   static const List<String> _allowedExtensions = ['txt', 'lrc', 'md'];
@@ -79,7 +80,7 @@ class FileService {
 
   Future<String> saveToLibrary(String content, String title) async {
     final file = _libraryFile(await getScriptsDirectory(), title);
-    await file.writeAsString(content);
+    await file.writeAsString(ScriptParser.normaliseLineBreaks(content));
     return file.path;
   }
 

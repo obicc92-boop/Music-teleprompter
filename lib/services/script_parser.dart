@@ -62,7 +62,18 @@ class ScriptParser {
   // ChordPro directive: {title: ...}, {sot}, {chorus}, etc.
   static final _directiveRegex = RegExp(r'^\{([^}]+)\}$');
 
+  /// Lyrics pasted or exported from other apps can break lines with a
+  /// lone carriage return, a vertical tab (Word's Shift+Enter), a form feed
+  /// or the Unicode line and paragraph separators. Each becomes a newline
+  /// — one character for one, so nothing measured in offsets moves.
+  static String normaliseLineBreaks(String text) =>
+      text.replaceAll(_oddLineBreak, '\n');
+
+  static final _oddLineBreak =
+      RegExp('\\r(?!\\n)|[\\u000B\\u000C\\u0085\\u2028\\u2029]');
+
   static Script parse(String rawText, {String title = 'Untitled'}) {
+    rawText = normaliseLineBreaks(rawText);
     if (rawText.trim().isEmpty) return Script.empty();
 
     final isLrc = _detectLrc(rawText);

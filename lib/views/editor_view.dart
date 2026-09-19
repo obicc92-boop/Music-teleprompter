@@ -386,7 +386,7 @@ class _EditorViewState extends State<EditorView> {
     if (result == null) return;
     setState(() {
       _currentTitle = result.title;
-      _textController.text = result.content;
+      _textController.text = ScriptParser.normaliseLineBreaks(result.content);
       _textController.formatting = ScriptFormatting.empty;
     });
     _titleController.text = result.title;
