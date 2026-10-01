@@ -3,7 +3,11 @@ name: Build macOS App
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write # attaching the DMG to a release
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -12,9 +16,23 @@ jobs:
   build:
     runs-on: macos-latest
 
+    env:
+      # The app is signed and notarized only when the Apple secrets are set,
+      # so this still produces a (warning-raising) DMG without them.
+      # See docs/RELEASING.md.
+      SIGNED: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
+      APP_PATH: build/macos/Build/Products/Release/Music Teleprompter.app
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Read the app version
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | cut -d+ -f1)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DMG=MusicTeleprompter-$VERSION.dmg" >> "$GITHUB_ENV"
+          echo "Building version $VERSION"
 
       # App icon comes from macos/Runner/Assets.xcassets (generated from assets/logo/logo.png)
       - name: Generate DMG background
@@ -77,6 +95,85 @@ jobs:
       - name: Verify build output
         run: ls -la "build/macos/Build/Products/Release/"
 
+      # ── Signing ────────────────────────────────────────────────────────────
+      # Without this the Mac calls the app damaged or refuses to open it,
+      # because it comes from an unidentified developer.
+
+      - name: Import the signing certificate
+        if: env.SIGNED == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          # Thrown away with the runner, so a random one-off password is fine
+          KEYCHAIN_PASSWORD=$(uuidgen)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+
+          # Lets codesign use the key without a GUI prompt
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '" ')
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep "Developer ID Application" | head -1 | awk '{print $2}')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No 'Developer ID Application' certificate in MACOS_CERTIFICATE."
+            security find-identity -v -p codesigning "$KEYCHAIN"
+            exit 1
+          fi
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Signing with $IDENTITY"
+
+      - name: Sign the app
+        if: env.SIGNED == 'true'
+        run: |
+          set -euo pipefail
+          sign() {
+            codesign --force --timestamp --options runtime \
+              --keychain "$KEYCHAIN" --sign "$IDENTITY" "$@"
+          }
+
+          # Everything nested gets signed before the bundle around it, and
+          # only the app itself carries the entitlements
+          find "$APP_PATH/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) \
+            -print0 | while IFS= read -r -d '' lib; do sign "$lib"; done
+          if [ -d "$APP_PATH/Contents/Frameworks" ]; then
+            for item in "$APP_PATH/Contents/Frameworks/"*; do sign "$item"; done
+          fi
+          sign --entitlements macos/Runner/Release.entitlements "$APP_PATH"
+
+          codesign --verify --strict --verbose=2 "$APP_PATH"
+
+      - name: Notarize the app
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # Stapling the app as well as the DMG matters: on a stage with no
+          # wifi, Gatekeeper can't check Apple's servers, so the ticket has
+          # to travel inside the app
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/app.zip"
+          bash .github/scripts/notarize.sh "$RUNNER_TEMP/app.zip"
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+
+      # ── The DMG people download ────────────────────────────────────────────
+
       - name: Install create-dmg
         run: brew install create-dmg
 
@@ -91,13 +188,66 @@ jobs:
             --icon "Music Teleprompter.app" 200 185 \
             --hide-extension "Music Teleprompter.app" \
             --app-drop-link 600 185 \
-            "MusicTeleprompter.dmg" \
+            "$DMG" \
             "build/macos/Build/Products/Release/" || true
+          # create-dmg exits non-zero over harmless unmount warnings, so the
+          # file itself is the test of whether it worked
+          test -f "$DMG"
+          ls -lh "$DMG"
+
+      - name: Sign and notarize the DMG
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          codesign --force --timestamp --keychain "$KEYCHAIN" \
+            --sign "$IDENTITY" "$DMG"
+          bash .github/scripts/notarize.sh "$DMG"
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Check it the way a Mac will
+        if: env.SIGNED == 'true'
+        run: |
+          set -euo pipefail
+          echo "── The app"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          spctl --assess --type exec --verbose=4 "$APP_PATH"
+          echo "── The DMG"
+          spctl --assess --type open \
+            --context context:primary-signature --verbose=4 "$DMG"
+          echo "Signed, notarized and stapled."
+
+      - name: Warn that this build is unsigned
+        if: env.SIGNED != 'true'
+        run: |
+          echo "::warning::No Apple secrets set, so this DMG is unsigned — macOS \
+          will call it damaged. See docs/RELEASING.md."
 
       - name: Upload DMG as artifact
         uses: actions/upload-artifact@v4
         with:
           name: MusicTeleprompter-dmg
-          path: MusicTeleprompter.dmg
+          path: ${{ env.DMG }}
           if-no-files-found: error
           retention-days: 30
+
+      # A tag (git tag v1.0.0 && git push origin v1.0.0) publishes a release
+      # page with a download link that needs no GitHub account
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Music Teleprompter ${{ env.VERSION }}
+          files: ${{ env.DMG }}
+          generate_release_notes: true
+          body: |
+            ## Music Teleprompter ${{ env.VERSION }} for macOS
+
+            Download the `.dmg` below, open it, and drag Music Teleprompter
+            into Applications.
+
+            ${{ env.SIGNED == 'true' && 'Signed and notarized by Apple — it opens like any other app.' || '⚠️ This build is **not signed**: macOS will say it is damaged or from an unidentified developer.' }}
